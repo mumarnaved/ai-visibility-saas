@@ -1,0 +1,11 @@
+{
+  "name": "ai-visibility-saas",
+  "version": "1.0.0",
+  "description": "AI Visibility SaaS platform",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "worker:dev": "pnpm --filter worker dev"
+  },
+  "packageManager": "pnpm@11.21.0"
+}

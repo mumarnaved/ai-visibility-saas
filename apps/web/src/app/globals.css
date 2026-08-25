@@ -1,0 +1,172 @@
+@import "tailwindcss";
+
+/* ========================================
+   DESIGN SYSTEM TOKENS
+
+   Tailwind v4 turns each of these into a
+   real utility class (bg-primary,
+   text-ink-muted, border-border, etc.) so
+   every page can share one palette instead
+   of hardcoding hex values.
+======================================== */
+
+@theme {
+  /* Brand */
+  --color-primary: #4f46e5;
+  --color-primary-hover: #4338ca;
+  --color-primary-tint: #eef2ff;
+
+  /* Surfaces (translucent for glassmorphism — paired with the
+     backdrop-filter rules below, keyed to the same class names) */
+  --color-page: transparent;
+  --color-surface: rgb(255 255 255 / 0.65);
+  --color-muted: rgb(255 255 255 / 0.45);
+  --color-border: rgb(255 255 255 / 0.55);
+  --color-border-subtle: rgb(255 255 255 / 0.35);
+  --color-border-strong: rgb(255 255 255 / 0.7);
+
+  /* Glass */
+  --color-glass-surface: rgb(255 255 255 / 0.6);
+  --color-glass-surface-strong: rgb(255 255 255 / 0.78);
+  --color-glass-surface-nested: rgb(255 255 255 / 0.45);
+  --color-glass-border: rgb(255 255 255 / 0.5);
+  --color-glass-border-strong: rgb(255 255 255 / 0.65);
+
+  /* Text */
+  --color-ink: #0f172a;
+  --color-ink-secondary: #334155;
+  --color-ink-muted: #64748b;
+  --color-ink-faint: #94a3b8;
+
+  /* Semantic - success */
+  --color-success-bg: #ecfdf5;
+  --color-success-text: #047857;
+  --color-success: #10b981;
+  --color-success-border: #bbf7d0;
+
+  /* Semantic - warning */
+  --color-warning-bg: #fffbeb;
+  --color-warning-text: #b45309;
+  --color-warning: #f59e0b;
+
+  /* Semantic - danger */
+  --color-danger-bg: #fef2f2;
+  --color-danger-text: #b91c1c;
+  --color-danger: #ef4444;
+  --color-danger-border: #fecaca;
+
+  /* Semantic - info */
+  --color-info-bg: #eff6ff;
+  --color-info-text: #1d4ed8;
+  --color-info: #3b82f6;
+}
+
+:root {
+  --background: var(--color-page);
+  --foreground: var(--color-ink);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+body {
+  background-color: #eef1fb;
+  background-image:
+    radial-gradient(circle at 10% 10%, rgb(129 140 248 / 0.35), transparent 45%),
+    radial-gradient(circle at 90% 15%, rgb(99 102 241 / 0.28), transparent 50%),
+    radial-gradient(circle at 20% 90%, rgb(165 180 252 / 0.3), transparent 45%),
+    radial-gradient(circle at 85% 85%, rgb(79 70 229 / 0.22), transparent 50%);
+  background-attachment: fixed;
+  color: var(--foreground);
+  font-family:
+    var(--font-geist-sans),
+    Arial,
+    Helvetica,
+    sans-serif;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* ========================================
+   GLASSMORPHISM UTILITIES
+
+   Frosted-glass surfaces layered on top of
+   the indigo mesh background above.
+======================================== */
+
+@layer utilities {
+  .glass-panel {
+    background: var(--color-glass-surface-strong);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--color-glass-border-strong);
+    box-shadow:
+      0 8px 32px rgb(79 70 229 / 0.12),
+      0 1px 2px rgb(15 23 42 / 0.04);
+  }
+
+  .glass-card {
+    background: var(--color-glass-surface);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--color-glass-border);
+    box-shadow:
+      0 8px 32px rgb(79 70 229 / 0.1),
+      0 1px 2px rgb(15 23 42 / 0.04);
+  }
+
+  .glass-nested {
+    background: var(--color-glass-surface-nested);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid var(--color-glass-border);
+  }
+}
+
+/* Existing bg-surface / bg-muted utilities already render as
+   translucent white (see --color-surface / --color-muted above) —
+   this attaches the blur + tinted shadow every card/pill across the
+   app needs to actually read as frosted glass, without editing every
+   page. Unlayered rules win over Tailwind's own @layer utilities. */
+.bg-surface {
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.bg-muted {
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.shadow-sm {
+  box-shadow:
+    0 8px 32px rgb(79 70 229 / 0.1),
+    0 1px 2px rgb(15 23 42 / 0.04);
+}
+
+/* Form controls stay fully opaque for legibility — everything else
+   (cards, panels, badges, nav) gets the frosted-glass treatment
+   above, but inputs/selects/textareas are excluded on purpose. */
+input.bg-surface,
+select.bg-surface,
+textarea.bg-surface {
+  background-color: #ffffff;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
