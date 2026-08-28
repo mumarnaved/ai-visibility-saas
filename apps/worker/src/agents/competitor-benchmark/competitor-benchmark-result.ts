@@ -12,6 +12,17 @@ export interface CompetitorBenchmarkMetric {
 
   strengths: string[];
   gaps: string[];
+
+  /*
+   * Explains what could/couldn't be derived
+   * from SerpApi's free tier for this
+   * competitor (e.g. why domainAuthority/
+   * estimatedTraffic/backlinks stayed null,
+   * or that organicKeywords is an indexed-
+   * page estimate rather than a verified
+   * keyword count).
+   */
+  dataNotes: string[];
 }
 
 export interface CompetitorBenchmarkResult {
@@ -41,6 +52,7 @@ export interface CompetitorBenchmarkResult {
     backlinks: number | null;
     structuralScore: number | null;
     contentScore: number | null;
+    dataNotes: string[];
   };
 
   priorityGaps: string[];

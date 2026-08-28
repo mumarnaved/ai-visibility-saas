@@ -8,30 +8,18 @@ import {
 } from "@/lib/auth";
 
 import DomainVerificationPanel from "@/components/DomainVerificationPanel";
+import CountUpNumber from "@/components/CountUpNumber";
+import EmptyState from "@/components/EmptyState";
+import {
+  loadActiveTenant,
+  type TenantSummary,
+} from "@/lib/tenant";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ??
   "http://localhost:4000";
 
-type Tenant = {
-  id: string;
-  slug: string;
-  name: string;
-  website_url: string;
-  schema_name: string;
-  status: string;
-  plan: string;
-  verification_token: string | null;
-  domain_verified_at: string | null;
-  created_at: string;
-};
-
-type TenantResponse = {
-  success: boolean;
-  data?: Tenant;
-  message?: string;
-  error?: string;
-};
+type Tenant = TenantSummary;
 
 type Metrics = {
   totalQueries: number;
@@ -94,50 +82,16 @@ export default function Home() {
          LOAD TENANT
       ======================================== */
 
-      const tenantResponse =
-        await authFetch(
-          `${API_BASE_URL}/api/tenants/latest`,
-          {
-            method: "GET",
-            cache: "no-store",
-          }
+      const { tenant: loadedTenant } =
+        await loadActiveTenant(
+          API_BASE_URL
         );
 
-      if (!tenantResponse.ok) {
-        let message =
-          `Tenant API returned ${tenantResponse.status}`;
-
-        try {
-          const errorResult =
-            await tenantResponse.json();
-
-          message =
-            errorResult?.message ??
-            errorResult?.error ??
-            message;
-        } catch {
-          // Ignore JSON parsing errors.
-        }
-
-        throw new Error(message);
-      }
-
-      const tenantResult: TenantResponse =
-        await tenantResponse.json();
-
-      if (
-        !tenantResult.success ||
-        !tenantResult.data
-      ) {
+      if (!loadedTenant) {
         throw new Error(
-          tenantResult.message ??
-            tenantResult.error ??
-            "Unable to load tenant."
+          "No workspace found. Create one to get started."
         );
       }
-
-      const loadedTenant =
-        tenantResult.data;
 
       setTenant(loadedTenant);
       setLoadingTenant(false);
@@ -218,6 +172,7 @@ export default function Home() {
 
   useEffect(() => {
     loadDashboard();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const tenantIsActive =
@@ -237,7 +192,7 @@ export default function Home() {
     metrics?.mentionedQueries ?? null;
 
   return (
-    <main className="min-h-screen bg-page text-ink">
+    <main className="animate-page-in min-h-screen bg-page text-ink">
 
       {/* ========================================
           HEADER
@@ -387,6 +342,12 @@ export default function Home() {
 
           {/* ========================================
               TENANT INFORMATION
+
+              Automatic scan progress/failure is shown
+              globally by ScanProgressBanner (rendered
+              in AppShell), not here - it needs to be
+              visible regardless of which page domain
+              verification redirects the user to.
           ======================================== */}
 
           {tenant && (
@@ -448,7 +409,7 @@ export default function Home() {
 
                 </div>
 
-                <div>
+                <div className="min-w-0">
 
                   <div className="text-xs font-medium text-ink-faint">
                     Website
@@ -458,6 +419,7 @@ export default function Home() {
                     href={tenant.website_url}
                     target="_blank"
                     rel="noopener noreferrer"
+                    title={tenant.website_url}
                     className="mt-1 block truncate text-sm font-medium text-ink underline underline-offset-2 hover:text-ink-secondary"
                   >
                     {tenant.website_url}
@@ -486,15 +448,15 @@ export default function Home() {
               REAL AI VISIBILITY STATS
           ======================================== */}
 
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="animate-stagger grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
 
             <StatCard
-              label="AI Visibility Score"
+              label="Citation Visibility Score"
               value={
                 loadingMetrics
                   ? "..."
                   : visibilityScore !== null
-                  ? `${visibilityScore}`
+                  ? <CountUpNumber value={visibilityScore} decimals={0} />
                   : "—"
               }
               suffix={
@@ -504,7 +466,7 @@ export default function Home() {
               }
               description={
                 visibilityScore !== null
-                  ? "Current visibility score"
+                  ? "Current citation visibility score"
                   : "No scans yet"
               }
             />
@@ -515,7 +477,7 @@ export default function Home() {
                 loadingMetrics
                   ? "..."
                   : mentionedQueries !== null
-                  ? `${mentionedQueries}`
+                  ? <CountUpNumber value={mentionedQueries} decimals={0} />
                   : "—"
               }
               description={
@@ -531,7 +493,7 @@ export default function Home() {
                 loadingMetrics
                   ? "..."
                   : totalQueries !== null
-                  ? `${totalQueries}`
+                  ? <CountUpNumber value={totalQueries} decimals={0} />
                   : "—"
               }
               description={
@@ -565,7 +527,7 @@ export default function Home() {
               MAIN CARDS
           ======================================== */}
 
-          <div className="mt-6 grid gap-6 xl:grid-cols-3">
+          <div className="animate-stagger mt-6 grid gap-6 xl:grid-cols-3">
 
             {/* GETTING STARTED */}
 
@@ -593,7 +555,7 @@ export default function Home() {
 
               </div>
 
-              <div className="mt-6 space-y-3">
+              <div className="animate-stagger mt-6 space-y-3">
 
                 {/* STEP 1 */}
 
@@ -730,7 +692,7 @@ export default function Home() {
           ======================================== */}
 
           {metrics && (
-            <div className="mt-6 grid gap-6 lg:grid-cols-2">
+            <div className="animate-stagger mt-6 grid gap-6 lg:grid-cols-2">
 
               {/* PERFORMANCE */}
 
@@ -754,7 +716,7 @@ export default function Home() {
                   />
 
                   <ProgressRow
-                    label="Visibility score"
+                    label="Citation visibility score"
                     value={
                       metrics.visibilityScore
                     }
@@ -776,13 +738,15 @@ export default function Home() {
                   Competitors appearing in AI responses.
                 </p>
 
-                <div className="mt-5 space-y-3">
+                <div className="animate-stagger mt-5 space-y-3">
 
                   {metrics.competitors.length ===
                   0 ? (
-                    <p className="text-sm text-ink-faint">
-                      No competitor data yet.
-                    </p>
+                    <EmptyState
+                      icon="search"
+                      title="No competitors detected yet"
+                      description="Once AI responses mention a competitor, they'll show up here."
+                    />
                   ) : (
                     metrics.competitors.map(
                       (competitor) => (
@@ -861,7 +825,7 @@ export default function Home() {
             </div>
 
             {tenant && (
-              <div className="mt-5 grid gap-4 sm:grid-cols-3">
+              <div className="animate-stagger mt-5 grid gap-4 sm:grid-cols-3">
 
                 <InfoItem
                   label="Company"
@@ -930,7 +894,7 @@ function StatCard({
   description,
 }: {
   label: string;
-  value: string;
+  value: React.ReactNode;
   suffix?: string;
   description: string;
 }) {
@@ -1061,13 +1025,16 @@ function InfoItem({
   value: string;
 }) {
   return (
-    <div className="rounded-lg bg-muted p-4">
+    <div className="min-w-0 rounded-lg bg-muted p-4">
 
       <div className="text-xs font-medium text-ink-faint">
         {label}
       </div>
 
-      <div className="mt-1 truncate text-sm font-semibold">
+      <div
+        className="mt-1 truncate text-sm font-semibold"
+        title={value}
+      >
         {value}
       </div>
 

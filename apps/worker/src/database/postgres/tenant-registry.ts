@@ -14,6 +14,13 @@ export interface TenantRecord {
   domainVerifiedAt: string | null;
 }
 
+export type ScanStatus =
+  | "not_started"
+  | "auditing"
+  | "planning"
+  | "ready"
+  | "failed";
+
 /* ========================================
    CREATE SCHEMA NAME
 ======================================== */
@@ -175,6 +182,34 @@ export async function markDomainVerified(
       WHERE id = $1
     `,
     [tenantId]
+  );
+}
+
+/* ========================================
+   SET SCAN STATUS
+
+   Tracks the automatic Stage 1 + Stage 2
+   scan that runs right after a tenant's
+   domain is verified, so the Overview page
+   can show a progress state without a job
+   queue - just a status column it polls.
+======================================== */
+
+export async function setScanStatus(
+  tenantId: string,
+  status: ScanStatus,
+  error?: string | null
+): Promise<void> {
+  await pool.query(
+    `
+      UPDATE platform.tenants
+      SET
+        scan_status = $2,
+        scan_error = $3,
+        updated_at = NOW()
+      WHERE id = $1
+    `,
+    [tenantId, status, error ?? null]
   );
 }
 

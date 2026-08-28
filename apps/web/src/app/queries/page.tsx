@@ -1,17 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { authFetch } from "../../lib/auth";
+import {
+  loadActiveTenant,
+  type TenantSummary,
+} from "../../lib/tenant";
 import Markdown from "../../components/Markdown";
 import Modal from "../../components/Modal";
+import EmptyState from "../../components/EmptyState";
+import { SkeletonRow } from "../../components/Skeleton";
 
-type Tenant = {
-  id: string;
-  name: string;
-  website_url: string;
-  status: string;
-  plan: string;
-};
+type Tenant = TenantSummary;
 
 type QueryRecord = {
   id: string;
@@ -82,8 +83,6 @@ export default function QueriesPage() {
 
   const [adding, setAdding] = useState(false);
 
-  const [addError, setAddError] = useState("");
-
   /* ========================================
      LOAD QUERIES AND RESULTS
 
@@ -116,35 +115,20 @@ export default function QueriesPage() {
       ======================================== */
 
       if (!currentTenantId) {
-        const tenantResponse = await authFetch(
-          `${WORKER_API}/api/tenants/latest`,
-          {
-            cache: "no-store",
-          }
-        );
+        const { tenant: loadedTenant } =
+          await loadActiveTenant(
+            WORKER_API
+          );
 
-        if (!tenantResponse.ok) {
+        if (!loadedTenant) {
           throw new Error(
-            `Tenant API returned ${tenantResponse.status}`
+            "No workspace found. Create one to get started."
           );
         }
 
-        const tenantResult: TenantResponse =
-          await tenantResponse.json();
+        setTenant(loadedTenant);
 
-        if (
-          !tenantResult.success ||
-          !tenantResult.data
-        ) {
-          throw new Error(
-            tenantResult.error ||
-              "Unable to load workspace."
-          );
-        }
-
-        setTenant(tenantResult.data);
-
-        currentTenantId = tenantResult.data.id;
+        currentTenantId = loadedTenant.id;
       }
 
       if (!currentTenantId) {
@@ -245,7 +229,7 @@ export default function QueriesPage() {
 
   async function addQuery() {
     if (!tenant) {
-      setAddError(
+      toast.error(
         "No workspace is available."
       );
       return;
@@ -254,7 +238,7 @@ export default function QueriesPage() {
     const trimmedQuery = newQuery.trim();
 
     if (!trimmedQuery) {
-      setAddError(
+      toast.error(
         "Please enter a query."
       );
       return;
@@ -262,7 +246,6 @@ export default function QueriesPage() {
 
     try {
       setAdding(true);
-      setAddError("");
 
       const response = await authFetch(
         `${WORKER_API}/api/tenants/${tenant.id}/stage1-audit`,
@@ -292,6 +275,8 @@ export default function QueriesPage() {
 
       setNewQuery("");
 
+      toast.success("Query added");
+
       await loadQueries(tenant.id, true);
     } catch (err) {
       console.error(
@@ -299,7 +284,7 @@ export default function QueriesPage() {
         err
       );
 
-      setAddError(
+      toast.error(
         err instanceof Error
           ? err.message
           : "Failed to add query."
@@ -342,7 +327,7 @@ export default function QueriesPage() {
   }
 
   return (
-    <main className="min-h-screen bg-page text-ink">
+    <main className="animate-page-in min-h-screen bg-page text-ink">
       <div className="mx-auto max-w-7xl px-5 py-8 sm:px-8">
 
         {/* ========================================
@@ -520,12 +505,6 @@ export default function QueriesPage() {
 
             </div>
 
-            {addError && (
-              <p className="mt-3 text-sm text-danger-text">
-                {addError}
-              </p>
-            )}
-
             <div className="mt-5">
               <button
                 type="button"
@@ -583,27 +562,20 @@ export default function QueriesPage() {
 
           {loading ? (
             <div className="space-y-3 p-6">
-
-              <div className="h-20 animate-pulse rounded-lg bg-muted" />
-              <div className="h-20 animate-pulse rounded-lg bg-muted" />
-              <div className="h-20 animate-pulse rounded-lg bg-muted" />
-
+              <SkeletonRow />
+              <SkeletonRow />
+              <SkeletonRow />
             </div>
           ) : queries.length === 0 ? (
-            <div className="p-10 text-center">
-
-              <div className="text-sm font-semibold">
-                No queries yet
-              </div>
-
-              <p className="mt-2 text-sm text-ink-muted">
-                Add a query above to start tracking
-                questions for your workspace.
-              </p>
-
+            <div className="p-6">
+              <EmptyState
+                icon="search"
+                title="No queries yet"
+                description="Add a query above to start tracking questions for your workspace."
+              />
             </div>
           ) : (
-            <div className="divide-y divide-border">
+            <div className="animate-stagger divide-y divide-border">
 
               {queries.map(
                 (queryRecord) => {
@@ -708,13 +680,16 @@ export default function QueriesPage() {
 
                           {/* PROVIDER */}
 
-                          <div className="flex items-center gap-2 rounded-lg bg-muted px-3 py-2">
+                          <div className="flex min-w-0 items-center gap-2 rounded-lg bg-muted px-3 py-2">
 
-                            <div className="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
+                            <div className="shrink-0 text-[11px] font-medium uppercase tracking-wider text-ink-faint">
                               Provider
                             </div>
 
-                            <div className="text-sm font-semibold text-ink">
+                            <div
+                              className="min-w-0 truncate text-sm font-semibold text-ink"
+                              title={latestResult.provider}
+                            >
                               {latestResult.provider}
                             </div>
 
@@ -722,13 +697,19 @@ export default function QueriesPage() {
 
                           {/* MODEL */}
 
-                          <div className="flex items-center gap-2 rounded-lg bg-muted px-3 py-2">
+                          <div className="flex min-w-0 items-center gap-2 rounded-lg bg-muted px-3 py-2">
 
-                            <div className="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
+                            <div className="shrink-0 text-[11px] font-medium uppercase tracking-wider text-ink-faint">
                               Model
                             </div>
 
-                            <div className="truncate text-sm font-semibold text-ink">
+                            <div
+                              className="min-w-0 truncate text-sm font-semibold text-ink"
+                              title={
+                                latestResult.model ||
+                                "Unknown"
+                              }
+                            >
                               {latestResult.model ||
                                 "Unknown"}
                             </div>
@@ -737,13 +718,13 @@ export default function QueriesPage() {
 
                           {/* POSITION */}
 
-                          <div className="flex items-center gap-2 rounded-lg bg-muted px-3 py-2">
+                          <div className="flex min-w-0 items-center gap-2 rounded-lg bg-muted px-3 py-2">
 
-                            <div className="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
+                            <div className="shrink-0 text-[11px] font-medium uppercase tracking-wider text-ink-faint">
                               Position
                             </div>
 
-                            <div className="text-sm font-semibold text-ink">
+                            <div className="min-w-0 truncate text-sm font-semibold text-ink">
                               {latestResult.brandPosition !==
                               null
                                 ? `#${latestResult.brandPosition}`
@@ -754,13 +735,13 @@ export default function QueriesPage() {
 
                           {/* CITATIONS */}
 
-                          <div className="flex items-center gap-2 rounded-lg bg-muted px-3 py-2">
+                          <div className="flex min-w-0 items-center gap-2 rounded-lg bg-muted px-3 py-2">
 
-                            <div className="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
+                            <div className="shrink-0 text-[11px] font-medium uppercase tracking-wider text-ink-faint">
                               Citations
                             </div>
 
-                            <div className="text-sm font-semibold text-ink">
+                            <div className="min-w-0 truncate text-sm font-semibold text-ink">
                               {citationCount}
                             </div>
 
@@ -768,13 +749,18 @@ export default function QueriesPage() {
 
                           {/* ANALYZED */}
 
-                          <div className="flex items-center gap-2 rounded-lg bg-muted px-3 py-2 lg:col-span-2">
+                          <div className="flex min-w-0 items-center gap-2 rounded-lg bg-muted px-3 py-2 lg:col-span-2">
 
-                            <div className="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
+                            <div className="shrink-0 text-[11px] font-medium uppercase tracking-wider text-ink-faint">
                               Analyzed
                             </div>
 
-                            <div className="truncate text-sm font-semibold text-ink">
+                            <div
+                              className="min-w-0 truncate text-sm font-semibold text-ink"
+                              title={formatDate(
+                                latestResult.analyzedAt
+                              )}
+                            >
                               {formatDate(
                                 latestResult.analyzedAt
                               )}

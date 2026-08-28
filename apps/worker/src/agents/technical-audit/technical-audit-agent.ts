@@ -16,8 +16,8 @@ import type {
 } from "./technical-audit-result.js";
 
 import {
-  analyzeWebsite,
-} from "../../services/website-analyzer.js";
+  getWebsiteAnalysis,
+} from "../../services/firecrawl-website-analyzer.js";
 
 import {
   saveTechnicalAudit,
@@ -63,13 +63,13 @@ export class TechnicalAuditAgent
       }
 
       /*
-       * Run the existing website analyzer.
-       *
-       * We reuse the existing implementation
-       * instead of replacing working code.
+       * Firecrawl first (handles JS-rendered
+       * pages, real markdown/metadata
+       * extraction), falling back to the
+       * regex analyzer on any failure.
        */
       const analysis =
-        await analyzeWebsite(
+        await getWebsiteAnalysis(
           auditInput.websiteUrl
         );
 

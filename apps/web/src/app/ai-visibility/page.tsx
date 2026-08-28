@@ -1,22 +1,22 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { authFetch } from "../../lib/auth";
+import {
+  loadActiveTenant,
+  type TenantSummary,
+} from "../../lib/tenant";
 import Markdown from "../../components/Markdown";
 import MarkdownPreview from "../../components/MarkdownPreview";
 import Modal from "../../components/Modal";
+import CountUpNumber from "../../components/CountUpNumber";
+import SharedEmptyState from "../../components/EmptyState";
+import { SkeletonLine } from "../../components/Skeleton";
 
 const API_BASE_URL = "http://localhost:4000";
 
-interface Tenant {
-  id: string;
-  slug: string;
-  name: string;
-  website_url: string;
-  schema_name: string;
-  status: string;
-  plan: string;
-}
+type Tenant = TenantSummary;
 
 interface Metrics {
   totalQueries: number;
@@ -80,7 +80,6 @@ export default function AIVisibilityPage() {
   const [competitors, setCompetitors] = useState("");
 
   const [running, setRunning] = useState(false);
-  const [runMessage, setRunMessage] = useState("");
 
   async function loadData(showRefreshState = false) {
     try {
@@ -92,30 +91,14 @@ export default function AIVisibilityPage() {
 
       setError("");
 
-      const tenantResponse = await authFetch(
-        `${API_BASE_URL}/api/tenants/latest`,
-        {
-          cache: "no-store",
-        }
-      );
+      const { tenant: loadedTenant } =
+        await loadActiveTenant(API_BASE_URL);
 
-      if (!tenantResponse.ok) {
-        const text = await tenantResponse.text();
-
+      if (!loadedTenant) {
         throw new Error(
-          `Tenant API returned ${tenantResponse.status}: ${text}`
+          "No workspace found. Create one to get started."
         );
       }
-
-      const tenantJson = await tenantResponse.json();
-
-      if (!tenantJson.success || !tenantJson.data) {
-        throw new Error(
-          tenantJson.error || "Tenant data was not returned."
-        );
-      }
-
-      const loadedTenant = tenantJson.data as Tenant;
 
       setTenant(loadedTenant);
 
@@ -232,7 +215,6 @@ export default function AIVisibilityPage() {
     try {
       setRunning(true);
       setError("");
-      setRunMessage("");
 
       const response = await authFetch(
         `${API_BASE_URL}/api/tenants/${tenant.id}/stage1-audit`,
@@ -272,8 +254,12 @@ export default function AIVisibilityPage() {
 
       setQuery("");
 
-      setRunMessage(
-        "Stage 1 audit completed successfully."
+      toast.success(
+        "Query completed",
+        {
+          description:
+            "Stage 1 audit completed successfully.",
+        }
       );
 
       await loadData(true);
@@ -340,7 +326,7 @@ export default function AIVisibilityPage() {
   const citationCount = metrics?.citationCount ?? 0;
 
   return (
-    <main className="min-h-screen bg-page text-ink">
+    <main className="animate-page-in min-h-screen bg-page text-ink">
       <div className="mx-auto max-w-7xl px-5 py-8 sm:px-8">
 
         {/* HEADER */}
@@ -420,20 +406,6 @@ export default function AIVisibilityPage() {
           </div>
         )}
 
-        {/* SUCCESS */}
-
-        {runMessage && (
-          <div className="mt-6 rounded-xl border border-success-border bg-success-bg p-4">
-            <div className="text-sm font-semibold text-success-text">
-              Query completed
-            </div>
-
-            <p className="mt-1 text-sm text-success-text">
-              {runMessage}
-            </p>
-          </div>
-        )}
-
         {/* SCORE */}
 
         <section className="mt-8 grid gap-4 lg:grid-cols-[1.2fr_2fr]">
@@ -441,12 +413,12 @@ export default function AIVisibilityPage() {
             <div className="flex items-start justify-between">
               <div>
                 <div className="text-xs font-semibold uppercase tracking-wider text-ink-faint">
-                  Visibility Score
+                  Citation Visibility Score
                 </div>
 
                 <div className="mt-3 flex items-end gap-2">
                   <span className="text-5xl font-bold tracking-tight">
-                    {visibilityScore}
+                    <CountUpNumber value={visibilityScore} />
                   </span>
 
                   <span className="mb-1 text-sm font-medium text-ink-faint">
@@ -476,7 +448,7 @@ export default function AIVisibilityPage() {
             </p>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="animate-stagger grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <MetricCard
               title="Mention Rate"
               value={`${mentionRate}%`}
@@ -509,7 +481,7 @@ export default function AIVisibilityPage() {
 
         {/* SECONDARY STATS */}
 
-        <section className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <section className="animate-stagger mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <StatCard
             title="Brand Mentions"
             value={`${mentionedQueries}`}
@@ -628,7 +600,7 @@ export default function AIVisibilityPage() {
 
             <div className="mt-5">
               {metrics?.competitors?.length ? (
-                <div className="space-y-3">
+                <div className="animate-stagger space-y-3">
                   {metrics.competitors.map(
                     (competitor) => (
                       <div
@@ -650,7 +622,11 @@ export default function AIVisibilityPage() {
                   )}
                 </div>
               ) : (
-                <EmptyState text="No competitor data yet." />
+                <SharedEmptyState
+                  icon="chart"
+                  title="No competitor data yet"
+                  description="Run an audit above to detect competitors mentioned alongside your brand."
+                />
               )}
             </div>
           </section>
@@ -669,7 +645,7 @@ export default function AIVisibilityPage() {
 
             <div className="mt-5">
               {metrics?.categories?.length ? (
-                <div className="space-y-5">
+                <div className="animate-stagger space-y-5">
                   {metrics.categories.map(
                     (item) => (
                       <div key={item.category}>
@@ -715,7 +691,11 @@ export default function AIVisibilityPage() {
                   )}
                 </div>
               ) : (
-                <EmptyState text="No category data yet." />
+                <SharedEmptyState
+                  icon="chart"
+                  title="No category data yet"
+                  description="Run queries across different categories to see performance breakdowns here."
+                />
               )}
             </div>
           </section>
@@ -741,22 +721,15 @@ export default function AIVisibilityPage() {
           </div>
 
           {queries.length === 0 ? (
-            <div className="px-6 py-12 text-center">
-              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-muted text-sm font-bold">
-                Q
-              </div>
-
-              <div className="mt-4 text-sm font-semibold">
-                No tracked queries
-              </div>
-
-              <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-ink-muted">
-                Run an AI visibility query above to start
-                tracking questions.
-              </p>
+            <div className="px-6 py-8">
+              <SharedEmptyState
+                icon="search"
+                title="No tracked queries"
+                description="Run an AI visibility query above to start tracking questions."
+              />
             </div>
           ) : (
-            <div className="divide-y divide-border">
+            <div className="animate-stagger divide-y divide-border">
               {queries.map((item) => (
                 <div
                   key={item.id}
@@ -824,22 +797,15 @@ export default function AIVisibilityPage() {
           </div>
 
           {results.length === 0 ? (
-            <div className="px-6 py-14 text-center">
-              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-muted text-sm font-bold">
-                AI
-              </div>
-
-              <div className="mt-4 text-sm font-semibold">
-                No AI visibility results yet
-              </div>
-
-              <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-ink-muted">
-                Run a query above to generate your first
-                AI visibility result.
-              </p>
+            <div className="px-6 py-8">
+              <SharedEmptyState
+                icon="document"
+                title="No AI visibility results yet"
+                description="Run a query above to generate your first AI visibility result."
+              />
             </div>
           ) : (
-            <div className="space-y-4 p-6">
+            <div className="animate-stagger space-y-4 p-6">
               {results.map((result) => (
                 <ResultCard
                   key={result.id}
@@ -931,7 +897,7 @@ function ResultCard({
           </p>
         </div>
 
-        <div className="flex shrink-0 flex-col items-start gap-2 sm:items-end">
+        <div className="flex w-full min-w-0 shrink-0 flex-col items-start gap-2 sm:w-auto sm:max-w-[200px] sm:items-end">
           <button
             type="button"
             onClick={() => setOpen(true)}
@@ -940,12 +906,18 @@ function ResultCard({
             View report
           </button>
 
-          <div className="text-xs text-ink-faint sm:text-right">
-            <div className="font-medium text-ink-muted">
+          <div className="w-full min-w-0 text-xs text-ink-faint sm:text-right">
+            <div
+              className="truncate font-medium text-ink-muted"
+              title={result.provider}
+            >
               {result.provider}
             </div>
 
-            <div className="mt-1">
+            <div
+              className="mt-1 truncate"
+              title={result.model ?? "Unknown model"}
+            >
               {result.model ?? "Unknown model"}
             </div>
           </div>
@@ -1110,24 +1082,6 @@ function ScoreBadge({
 }
 
 /* ========================================
-   EMPTY STATE
-======================================== */
-
-function EmptyState({
-  text,
-}: {
-  text: string;
-}) {
-  return (
-    <div className="rounded-xl border border-dashed border-border-strong px-4 py-8 text-center">
-      <p className="text-sm text-ink-faint">
-        {text}
-      </p>
-    </div>
-  );
-}
-
-/* ========================================
    LOADING STATE
 ======================================== */
 
@@ -1135,28 +1089,29 @@ function LoadingState() {
   return (
     <main className="min-h-screen bg-page text-ink">
       <div className="mx-auto max-w-7xl px-5 py-8 sm:px-8">
-        <div className="animate-pulse">
-          <div className="h-8 w-64 rounded bg-border" />
+        <SkeletonLine width="16rem" className="h-8" />
 
-          <div className="mt-3 h-4 w-96 rounded bg-muted" />
+        <SkeletonLine
+          width="24rem"
+          className="mt-3 h-4"
+        />
 
-          <div className="mt-8 grid gap-4 lg:grid-cols-3">
-            <div className="h-48 rounded-xl bg-surface" />
+        <div className="mt-8 grid gap-4 lg:grid-cols-3">
+          <div className="skeleton-shimmer h-48 rounded-xl" />
 
-            <div className="h-48 rounded-xl bg-surface lg:col-span-2" />
-          </div>
-
-          <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            {[1, 2, 3, 4].map((item) => (
-              <div
-                key={item}
-                className="h-32 rounded-xl bg-surface"
-              />
-            ))}
-          </div>
-
-          <div className="mt-6 h-96 rounded-xl bg-surface" />
+          <div className="skeleton-shimmer h-48 rounded-xl lg:col-span-2" />
         </div>
+
+        <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {[1, 2, 3, 4].map((item) => (
+            <div
+              key={item}
+              className="skeleton-shimmer h-32 rounded-xl"
+            />
+          ))}
+        </div>
+
+        <div className="skeleton-shimmer mt-6 h-96 rounded-xl" />
       </div>
     </main>
   );

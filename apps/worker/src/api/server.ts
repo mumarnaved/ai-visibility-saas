@@ -45,6 +45,41 @@ import {
 } from "../agents/publishing/index.js";
 
 import {
+  MonitoringAgent,
+} from "../agents/monitoring/index.js";
+
+import {
+  ReportGenerationAgent,
+} from "../agents/report-generation/index.js";
+
+import {
+  getLatestMonitoringSnapshot,
+} from "../database/postgres/monitoring/monitoring-snapshots-repository.js";
+
+import {
+  getLatestReport,
+} from "../database/postgres/reports/reports-repository.js";
+
+import {
+  buildGoogleAuthUrl,
+  discoverGa4Property,
+  discoverSearchConsoleSite,
+  exchangeCodeForTokens,
+  type GoogleTokenBundle,
+} from "../lib/google-oauth-client.js";
+
+import {
+  buildOAuthState,
+  verifyOAuthState,
+} from "../lib/google-oauth-state.js";
+
+import {
+  getCredential,
+  revokeCredential as revokeVaultCredential,
+  storeCredential,
+} from "../database/postgres/credential-vault/credential-vault-service.js";
+
+import {
   listExecutionTasks,
   approveExecutionTask,
 } from "../database/postgres/execution-tasks/execution-tasks-repository.js";
@@ -52,7 +87,16 @@ import {
 import {
   getTenantById,
   markDomainVerified,
+  setScanStatus,
 } from "../database/postgres/tenant-registry.js";
+
+import {
+  getBrandNameFromWebsite,
+} from "../lib/brand-name.js";
+
+import {
+  runAutomaticScan,
+} from "../services/automatic-scan.js";
 
 import {
   verifyDnsTxtRecord,
@@ -74,6 +118,28 @@ import {
 
 import authRouter from "../auth/routes/auth-routes.js";
 
+import {
+  createCheckoutSession,
+  verifyStripeWebhookSignature,
+} from "../lib/stripe-client.js";
+
+import {
+  countTenantsOwnedByUser,
+  getEffectivePlanForTenant,
+  getEffectivePlanForUser,
+} from "../database/postgres/billing/billing-repository.js";
+
+import {
+  PLAN_WEBSITE_LIMITS,
+  getPriceIdForPlan,
+  isSelfServePlanTier,
+  planHasPaidFeatureAccess,
+} from "../services/billing-service.js";
+
+import {
+  handleStripeWebhookEvent,
+} from "../services/stripe-webhook-handler.js";
+
 const app = express();
 
 const PORT = Number(
@@ -88,6 +154,100 @@ app.use(
   cors({
     origin: "http://localhost:3000",
   })
+);
+
+/* ========================================
+   STRIPE WEBHOOK
+
+   Registered before express.json() and
+   without requireAuth - Stripe calls this
+   directly with no session, and signature
+   verification needs the raw request body,
+   which a JSON-parsing middleware earlier
+   in the chain would have already consumed.
+======================================== */
+
+app.post(
+  "/api/stripe/webhook",
+  express.raw({
+    type: "application/json",
+  }),
+  async (req, res) => {
+    try {
+      const webhookSecret =
+        process.env
+          .STRIPE_WEBHOOK_SECRET;
+
+      const signatureHeader =
+        req.headers[
+          "stripe-signature"
+        ];
+
+      if (
+        !webhookSecret ||
+        typeof signatureHeader !==
+          "string"
+      ) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+            error:
+              "Webhook is not configured or signature is missing.",
+          });
+      }
+
+      const rawBody =
+        Buffer.isBuffer(req.body)
+          ? req.body.toString(
+              "utf8"
+            )
+          : "";
+
+      const isValid =
+        verifyStripeWebhookSignature(
+          rawBody,
+          signatureHeader,
+          webhookSecret
+        );
+
+      if (!isValid) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+            error:
+              "Invalid webhook signature.",
+          });
+      }
+
+      const event =
+        JSON.parse(rawBody);
+
+      await handleStripeWebhookEvent(
+        event
+      );
+
+      return res.json({
+        success: true,
+      });
+    } catch (error) {
+      console.error(
+        "Stripe webhook handling failed:",
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          success: false,
+          error:
+            error instanceof Error
+              ? error.message
+              : "Webhook handling failed.",
+        });
+    }
+  }
 );
 
 app.use(express.json());
@@ -123,45 +283,14 @@ app.use(
   requireAuth
 );
 
+app.use(
+  "/api/billing",
+  requireAuth
+);
+
 /* ========================================
    HELPERS
 ======================================== */
-
-function getBrandNameFromWebsite(
-  websiteUrl: string
-): string {
-  try {
-    const parsedUrl = new URL(
-      websiteUrl
-    );
-
-    const hostname =
-      parsedUrl.hostname
-        .toLowerCase()
-        .replace(
-          /^www\./,
-          ""
-        );
-
-    const parts =
-      hostname.split(".");
-
-    if (
-      parts.length === 0
-    ) {
-      return "";
-    }
-
-    return parts[0]
-      .replace(
-        /[-_]+/g,
-        " "
-      )
-      .trim();
-  } catch {
-    return "";
-  }
-}
 
 /* ========================================
    HEALTH
@@ -189,6 +318,86 @@ app.get(
           error instanceof Error
             ? error.message
             : "Database connection failed.",
+      });
+    }
+  }
+);
+
+/* ========================================
+   LIST TENANTS
+
+   Returns every tenant the authenticated
+   user belongs to (via workspace membership),
+   newest first. Powers the tenant switcher -
+   /api/tenants/latest only ever returns the
+   single most-recently-created one, which is
+   wrong whenever a user has more than one
+   tenant and wants to keep working in an
+   older one.
+======================================== */
+
+app.get(
+  "/api/tenants",
+  async (
+    req: AuthenticatedRequest,
+    res
+  ) => {
+    try {
+      const userId =
+        req.auth?.user.id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          error:
+            "Authentication required.",
+        });
+      }
+
+      const result =
+        await pool.query(
+          `
+            SELECT
+              t.id,
+              t.slug,
+              t.name,
+              t.website_url,
+              t.schema_name,
+              t.status,
+              t.plan,
+              t.verification_token,
+              t.domain_verified_at,
+              t.scan_status,
+              t.scan_error,
+              t.created_at,
+              t.updated_at
+            FROM platform.tenants t
+            JOIN platform.workspaces w
+              ON w.tenant_id = t.id
+            JOIN platform.workspace_members wm
+              ON wm.workspace_id = w.id
+            WHERE wm.user_id = $1
+            ORDER BY t.created_at DESC
+          `,
+          [userId]
+        );
+
+      return res.json({
+        success: true,
+        data: result.rows,
+      });
+    } catch (error) {
+      console.error(
+        "Failed to list tenants:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to list tenants.",
       });
     }
   }
@@ -234,6 +443,8 @@ app.get(
               t.plan,
               t.verification_token,
               t.domain_verified_at,
+              t.scan_status,
+              t.scan_error,
               t.created_at,
               t.updated_at
             FROM platform.tenants t
@@ -339,6 +550,34 @@ app.post(
           success: false,
           error:
             "websiteUrl must be a valid URL.",
+        });
+      }
+
+      /*
+       * Website-count gate: only applies to
+       * creating a NEW tenant, never to
+       * tenants the user already owns - an
+       * account that already exceeds its
+       * plan's limit (from before billing
+       * existed, or after a downgrade) keeps
+       * full access to everything it already
+       * has.
+       */
+      const [
+        effectivePlan,
+        existingTenantCount,
+      ] = await Promise.all([
+        getEffectivePlanForUser(userId),
+        countTenantsOwnedByUser(userId),
+      ]);
+
+      if (
+        existingTenantCount >=
+        effectivePlan.websiteLimit
+      ) {
+        return res.status(403).json({
+          success: false,
+          error: `Your current plan (${effectivePlan.planTier}) allows up to ${effectivePlan.websiteLimit} website(s). Upgrade your plan to add another website.`,
         });
       }
 
@@ -472,6 +711,175 @@ app.post(
           error instanceof Error
             ? error.message
             : "Tenant creation failed.",
+      });
+    }
+  }
+);
+
+/* ========================================
+   BILLING STATUS
+
+   Returns the authenticated user's current
+   plan, along with how many websites they
+   own vs their plan's limit, for the
+   Settings/Billing page.
+======================================== */
+
+app.get(
+  "/api/billing/status",
+  async (
+    req: AuthenticatedRequest,
+    res
+  ) => {
+    try {
+      const userId =
+        req.auth?.user.id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          error:
+            "Authentication required.",
+        });
+      }
+
+      const [
+        effectivePlan,
+        tenantCount,
+      ] = await Promise.all([
+        getEffectivePlanForUser(
+          userId
+        ),
+        countTenantsOwnedByUser(
+          userId
+        ),
+      ]);
+
+      return res.json({
+        success: true,
+        data: {
+          planTier:
+            effectivePlan.planTier,
+          status:
+            effectivePlan.status,
+          websiteLimit:
+            effectivePlan.websiteLimit ===
+            Number.POSITIVE_INFINITY
+              ? null
+              : effectivePlan.websiteLimit,
+          tenantCount,
+          currentPeriodEnd:
+            effectivePlan.currentPeriodEnd,
+        },
+      });
+    } catch (error) {
+      console.error(
+        "Failed to load billing status:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to load billing status.",
+      });
+    }
+  }
+);
+
+/* ========================================
+   CREATE CHECKOUT SESSION
+
+   Starts a Stripe Checkout session for the
+   Growth or Scale plan. Enterprise and
+   White-Label are "Contact us" only and are
+   rejected here rather than silently
+   accepted.
+======================================== */
+
+app.post(
+  "/api/billing/checkout",
+  async (
+    req: AuthenticatedRequest,
+    res
+  ) => {
+    try {
+      const userId =
+        req.auth?.user.id;
+
+      const userEmail =
+        req.auth?.user.email;
+
+      if (!userId || !userEmail) {
+        return res.status(401).json({
+          success: false,
+          error:
+            "Authentication required.",
+        });
+      }
+
+      const { planTier } = req.body;
+
+      if (
+        typeof planTier !== "string" ||
+        !isSelfServePlanTier(planTier)
+      ) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "planTier must be 'growth' or 'scale'. Enterprise and White-Label are handled by contacting sales, not automated checkout.",
+        });
+      }
+
+      const priceId =
+        getPriceIdForPlan(planTier);
+
+      const webAppUrl =
+        process.env.WEB_APP_URL ??
+        "http://localhost:3000";
+
+      const session =
+        await createCheckoutSession({
+          priceId,
+          customerEmail: userEmail,
+          clientReferenceId: userId,
+
+          successUrl: `${webAppUrl}/settings?checkout=success`,
+
+          cancelUrl: `${webAppUrl}/settings?checkout=canceled`,
+
+          metadata: {
+            userId,
+            planTier,
+          },
+        });
+
+      if (!session.url) {
+        return res.status(502).json({
+          success: false,
+          error:
+            "Stripe did not return a checkout URL.",
+        });
+      }
+
+      return res.json({
+        success: true,
+        data: { url: session.url },
+      });
+    } catch (error) {
+      console.error(
+        "Failed to create checkout session:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to create checkout session.",
       });
     }
   }
@@ -927,6 +1335,7 @@ app.post(
 
 app.post(
   "/api/tenants/:tenantId/stage2-plan",
+  requirePaidFeatureAccess,
   async (req, res) => {
     try {
       const tenantId =
@@ -1140,6 +1549,7 @@ app.get(
 
 app.post(
   "/api/tenants/:tenantId/stage2-plan/:planId/approve",
+  requirePaidFeatureAccess,
   async (req, res) => {
     try {
       const tenantId =
@@ -1278,11 +1688,83 @@ function buildTenantContext(
 }
 
 /* ========================================
+   REQUIRE PAID FEATURE ACCESS
+
+   Gates content-plan generation, content
+   production/fixes, task approval/
+   publishing, and monitoring/reporting
+   behind a paid plan - the Free Audit tier
+   is Stage 1 only. Read-only endpoints
+   (viewing an already-generated plan,
+   report, or monitoring snapshot) are
+   deliberately left ungated so existing
+   data stays visible regardless of plan.
+======================================== */
+
+async function requirePaidFeatureAccess(
+  req: express.Request<
+    Record<string, string>
+  >,
+  res: express.Response,
+  next: express.NextFunction
+): Promise<void> {
+  try {
+    const tenantId =
+      req.params.tenantId?.trim();
+
+    if (!tenantId) {
+      res.status(400).json({
+        success: false,
+        error:
+          "tenantId is required.",
+      });
+
+      return;
+    }
+
+    const effectivePlan =
+      await getEffectivePlanForTenant(
+        tenantId
+      );
+
+    if (
+      !planHasPaidFeatureAccess(
+        effectivePlan.planTier
+      )
+    ) {
+      res.status(403).json({
+        success: false,
+        error:
+          "This feature requires the Growth plan or above. The Free Audit tier includes the Stage 1 audit only.",
+      });
+
+      return;
+    }
+
+    next();
+  } catch (error) {
+    console.error(
+      "Failed to check plan access:",
+      error
+    );
+
+    res.status(500).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to check plan access.",
+    });
+  }
+}
+
+/* ========================================
    STAGE 3 — PRODUCE CONTENT DRAFTS
 ======================================== */
 
 app.post(
   "/api/tenants/:tenantId/stage3-produce",
+  requirePaidFeatureAccess,
   async (req, res) => {
     try {
       const tenantId =
@@ -1364,6 +1846,7 @@ app.post(
 
 app.post(
   "/api/tenants/:tenantId/stage3-fix",
+  requirePaidFeatureAccess,
   async (req, res) => {
     try {
       const tenantId =
@@ -1506,6 +1989,7 @@ app.get(
 
 app.post(
   "/api/tenants/:tenantId/execution-tasks/:taskId/approve",
+  requirePaidFeatureAccess,
   async (req, res) => {
     try {
       const tenantId =
@@ -1594,6 +2078,7 @@ app.post(
 
 app.post(
   "/api/tenants/:tenantId/execution-tasks/:taskId/publish",
+  requirePaidFeatureAccess,
   async (req, res) => {
     try {
       const tenantId =
@@ -1678,6 +2163,630 @@ app.post(
           error instanceof Error
             ? error.message
             : "Failed to publish execution task.",
+      });
+    }
+  }
+);
+
+/* ========================================
+   STAGE 4 — RUN MONITORING CHECK
+======================================== */
+
+app.post(
+  "/api/tenants/:tenantId/stage4-monitor",
+  requirePaidFeatureAccess,
+  async (req, res) => {
+    try {
+      const tenantId =
+        req.params.tenantId?.trim();
+
+      if (!tenantId) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "tenantId is required.",
+        });
+      }
+
+      const schemaName =
+        await resolveTenantSchema(
+          tenantId
+        );
+
+      if (!schemaName) {
+        return res.status(404).json({
+          success: false,
+          error:
+            "Tenant not found.",
+        });
+      }
+
+      const agent =
+        new MonitoringAgent();
+
+      const agentOutput =
+        await agent.execute({
+          tenantContext:
+            buildTenantContext(
+              tenantId,
+              schemaName
+            ),
+          payload: { tenantId },
+        });
+
+      if (
+        !agentOutput.success ||
+        !agentOutput.data
+      ) {
+        return res.status(422).json({
+          success: false,
+          error:
+            agentOutput.error ||
+            "Monitoring run failed.",
+        });
+      }
+
+      return res.status(201).json({
+        success: true,
+        data: agentOutput.data,
+        metadata: {
+          operation: "stage4-monitor",
+        },
+      });
+    } catch (error) {
+      console.error(
+        "Failed to run Stage 4 monitoring check:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to run Stage 4 monitoring check.",
+      });
+    }
+  }
+);
+
+/* ========================================
+   STAGE 4 — GENERATE REPORT
+======================================== */
+
+app.post(
+  "/api/tenants/:tenantId/stage4-report",
+  requirePaidFeatureAccess,
+  async (req, res) => {
+    try {
+      const tenantId =
+        req.params.tenantId?.trim();
+
+      if (!tenantId) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "tenantId is required.",
+        });
+      }
+
+      const schemaName =
+        await resolveTenantSchema(
+          tenantId
+        );
+
+      if (!schemaName) {
+        return res.status(404).json({
+          success: false,
+          error:
+            "Tenant not found.",
+        });
+      }
+
+      const agent =
+        new ReportGenerationAgent();
+
+      const agentOutput =
+        await agent.execute({
+          tenantContext:
+            buildTenantContext(
+              tenantId,
+              schemaName
+            ),
+          payload: { tenantId },
+        });
+
+      if (
+        !agentOutput.success ||
+        !agentOutput.data
+      ) {
+        return res.status(422).json({
+          success: false,
+          error:
+            agentOutput.error ||
+            "Report generation failed.",
+        });
+      }
+
+      return res.status(201).json({
+        success: true,
+        data: agentOutput.data,
+        metadata: {
+          operation: "stage4-report",
+        },
+      });
+    } catch (error) {
+      console.error(
+        "Failed to generate Stage 4 report:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to generate Stage 4 report.",
+      });
+    }
+  }
+);
+
+/* ========================================
+   STAGE 4 — GET LATEST MONITORING SNAPSHOT
+======================================== */
+
+app.get(
+  "/api/tenants/:tenantId/monitoring/latest",
+  async (req, res) => {
+    try {
+      const tenantId =
+        req.params.tenantId?.trim();
+
+      if (!tenantId) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "tenantId is required.",
+        });
+      }
+
+      const schemaName =
+        await resolveTenantSchema(
+          tenantId
+        );
+
+      if (!schemaName) {
+        return res.status(404).json({
+          success: false,
+          error:
+            "Tenant not found.",
+        });
+      }
+
+      const snapshot =
+        await getLatestMonitoringSnapshot(
+          schemaName
+        );
+
+      return res.json({
+        success: true,
+        data: snapshot,
+        metadata: {
+          operation:
+            "get-latest-monitoring-snapshot",
+        },
+      });
+    } catch (error) {
+      console.error(
+        "Failed to load latest monitoring snapshot:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to load latest monitoring snapshot.",
+      });
+    }
+  }
+);
+
+/* ========================================
+   STAGE 4 — GET LATEST REPORT
+======================================== */
+
+app.get(
+  "/api/tenants/:tenantId/reports/latest",
+  async (req, res) => {
+    try {
+      const tenantId =
+        req.params.tenantId?.trim();
+
+      if (!tenantId) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "tenantId is required.",
+        });
+      }
+
+      const schemaName =
+        await resolveTenantSchema(
+          tenantId
+        );
+
+      if (!schemaName) {
+        return res.status(404).json({
+          success: false,
+          error:
+            "Tenant not found.",
+        });
+      }
+
+      const report =
+        await getLatestReport(
+          schemaName
+        );
+
+      return res.json({
+        success: true,
+        data: report,
+        metadata: {
+          operation:
+            "get-latest-report",
+        },
+      });
+    } catch (error) {
+      console.error(
+        "Failed to load latest report:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to load latest report.",
+      });
+    }
+  }
+);
+
+/* ========================================
+   GOOGLE OAUTH — START
+
+   Protected (falls under the /api/tenants
+   requireAuth middleware registered above).
+   Returns an authUrl for the frontend to
+   navigate the browser to directly - this
+   can't be a plain fetch, since Google's
+   consent screen needs a real top-level
+   navigation.
+======================================== */
+
+app.get(
+  "/api/tenants/:tenantId/oauth/google/start",
+  async (req, res) => {
+    try {
+      const tenantId =
+        req.params.tenantId?.trim();
+
+      if (!tenantId) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "tenantId is required.",
+        });
+      }
+
+      const schemaName =
+        await resolveTenantSchema(
+          tenantId
+        );
+
+      if (!schemaName) {
+        return res.status(404).json({
+          success: false,
+          error:
+            "Tenant not found.",
+        });
+      }
+
+      const state =
+        buildOAuthState(tenantId);
+
+      const authUrl =
+        buildGoogleAuthUrl(state);
+
+      return res.json({
+        success: true,
+        data: { authUrl },
+        metadata: {
+          operation:
+            "oauth-google-start",
+        },
+      });
+    } catch (error) {
+      console.error(
+        "Failed to start Google OAuth flow:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to start Google OAuth flow.",
+      });
+    }
+  }
+);
+
+/* ========================================
+   GOOGLE OAUTH — CALLBACK
+
+   Public - Google redirects the browser here
+   directly, carrying none of our auth
+   headers. The signed `state` param (built
+   in the start route above) is what proves
+   which tenant this belongs to and that the
+   request wasn't forged.
+======================================== */
+
+app.get(
+  "/api/oauth/google/callback",
+  async (req, res) => {
+    const redirectBase =
+      "http://localhost:3000/monitoring";
+
+    try {
+      const {
+        code,
+        state,
+        error: oauthError,
+      } = req.query;
+
+      if (
+        typeof oauthError ===
+        "string"
+      ) {
+        return res.redirect(
+          `${redirectBase}?google=error&reason=${encodeURIComponent(
+            oauthError
+          )}`
+        );
+      }
+
+      if (
+        typeof code !== "string" ||
+        typeof state !== "string"
+      ) {
+        return res.redirect(
+          `${redirectBase}?google=error&reason=missing_params`
+        );
+      }
+
+      const verifiedState =
+        verifyOAuthState(state);
+
+      if (!verifiedState) {
+        return res.redirect(
+          `${redirectBase}?google=error&reason=invalid_state`
+        );
+      }
+
+      const { tenantId } =
+        verifiedState;
+
+      const tenant =
+        await getTenantById(
+          tenantId
+        );
+
+      if (!tenant?.websiteUrl) {
+        return res.redirect(
+          `${redirectBase}?google=error&reason=tenant_not_found`
+        );
+      }
+
+      const tokens =
+        await exchangeCodeForTokens(
+          code
+        );
+
+      const [
+        ga4Discovery,
+        gscDiscovery,
+      ] = await Promise.all([
+        discoverGa4Property(
+          tokens.accessToken
+        ),
+        discoverSearchConsoleSite(
+          tokens.accessToken,
+          tenant.websiteUrl
+        ),
+      ]);
+
+      const discoveryIssues = [
+        ga4Discovery.issue,
+        gscDiscovery.issue,
+      ].filter(
+        (issue): issue is string =>
+          issue !== null
+      );
+
+      if (discoveryIssues.length > 0) {
+        console.warn(
+          `[google-oauth] Tenant ${tenantId} connected Google but discovery had issues:`,
+          discoveryIssues
+        );
+      }
+
+      const bundle: GoogleTokenBundle =
+        {
+          accessToken:
+            tokens.accessToken,
+          refreshToken:
+            tokens.refreshToken,
+          expiresAt:
+            tokens.expiresAt,
+          ga4PropertyId:
+            ga4Discovery.value,
+          gscSiteUrl:
+            gscDiscovery.value,
+          connectedAt:
+            new Date().toISOString(),
+          discoveryIssues,
+        };
+
+      await storeCredential(
+        tenantId,
+        "google",
+        JSON.stringify(bundle)
+      );
+
+      return res.redirect(
+        `${redirectBase}?google=connected`
+      );
+    } catch (error) {
+      console.error(
+        "Google OAuth callback failed:",
+        error
+      );
+
+      return res.redirect(
+        `${redirectBase}?google=error&reason=server_error`
+      );
+    }
+  }
+);
+
+/* ========================================
+   GOOGLE OAUTH — STATUS
+======================================== */
+
+app.get(
+  "/api/tenants/:tenantId/oauth/google/status",
+  async (req, res) => {
+    try {
+      const tenantId =
+        req.params.tenantId?.trim();
+
+      if (!tenantId) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "tenantId is required.",
+        });
+      }
+
+      const raw =
+        await getCredential(
+          tenantId,
+          "google"
+        );
+
+      if (!raw) {
+        return res.json({
+          success: true,
+          data: {
+            connected: false,
+          },
+        });
+      }
+
+      try {
+        const bundle = JSON.parse(
+          raw
+        ) as GoogleTokenBundle;
+
+        return res.json({
+          success: true,
+          data: {
+            connected: true,
+            ga4PropertyId:
+              bundle.ga4PropertyId,
+            gscSiteUrl:
+              bundle.gscSiteUrl,
+            connectedAt:
+              bundle.connectedAt,
+            discoveryIssues:
+              bundle.discoveryIssues ??
+              [],
+          },
+        });
+      } catch {
+        return res.json({
+          success: true,
+          data: {
+            connected: false,
+          },
+        });
+      }
+    } catch (error) {
+      console.error(
+        "Failed to load Google OAuth status:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to load Google OAuth status.",
+      });
+    }
+  }
+);
+
+/* ========================================
+   GOOGLE OAUTH — DISCONNECT
+======================================== */
+
+app.post(
+  "/api/tenants/:tenantId/oauth/google/disconnect",
+  async (req, res) => {
+    try {
+      const tenantId =
+        req.params.tenantId?.trim();
+
+      if (!tenantId) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "tenantId is required.",
+        });
+      }
+
+      await revokeVaultCredential(
+        tenantId,
+        "google"
+      );
+
+      return res.json({
+        success: true,
+        data: {
+          disconnected: true,
+        },
+      });
+    } catch (error) {
+      console.error(
+        "Failed to disconnect Google OAuth:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to disconnect Google OAuth.",
       });
     }
   }
@@ -1777,6 +2886,26 @@ app.post(
         tenantId.trim()
       );
 
+      /*
+       * Set to "auditing" synchronously so the
+       * client's next tenant fetch (right after
+       * this response) already sees the scan as
+       * in progress, then let the rest of the
+       * scan run in the background - not awaited,
+       * since verification shouldn't block on a
+       * scan that can take a while.
+       */
+      await setScanStatus(
+        tenantId.trim(),
+        "auditing"
+      );
+
+      void runAutomaticScan(
+        tenantId.trim(),
+        tenant.websiteUrl,
+        tenant.schemaName
+      );
+
       return res.json({
         success: true,
         data: {
@@ -1856,6 +2985,19 @@ app.post(
       await markDomainVerified(
         tenantId.trim()
       );
+
+      if (tenant.websiteUrl) {
+        await setScanStatus(
+          tenantId.trim(),
+          "auditing"
+        );
+
+        void runAutomaticScan(
+          tenantId.trim(),
+          tenant.websiteUrl,
+          tenant.schemaName
+        );
+      }
 
       return res.json({
         success: true,

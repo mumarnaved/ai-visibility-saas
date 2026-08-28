@@ -408,3 +408,60 @@ export async function getLatestAuditReport(
 
   return mapRow(row, tenantId);
 }
+
+/* ========================================
+   GET PREVIOUS AUDIT REPORT
+
+   The second-most-recent report - used to
+   compute score deltas for Stage 4 reports
+   against the audit before this one.
+======================================== */
+
+export async function getPreviousAuditReport(
+  tenantId: string
+): Promise<AuditReportRecord | null> {
+  const schema =
+    getTenantSchema(
+      tenantId
+    );
+
+  const table =
+    `"${schema}"."audit_reports"`;
+
+  const result =
+    await pool.query<AuditReportRow>(
+      `
+        SELECT
+          id,
+          website_url,
+          status,
+          overall_score,
+          technical_seo_score,
+          content_quality_score,
+          aio_readiness_score,
+          geo_citation_score,
+          competitor_gap_score,
+          summary,
+          technical_audit,
+          content_entity_audit,
+          citation_audit,
+          competitor_benchmark,
+          priorities,
+          recommendations,
+          created_at
+        FROM ${table}
+        ORDER BY created_at DESC
+        LIMIT 1
+        OFFSET 1
+      `
+    );
+
+  const row =
+    result.rows[0];
+
+  if (!row) {
+    return null;
+  }
+
+  return mapRow(row, tenantId);
+}

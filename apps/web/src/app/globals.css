@@ -170,3 +170,244 @@ textarea.bg-surface {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
+
+/* ========================================
+   MOTION SYSTEM
+
+   A handful of shared keyframes + utility
+   classes, applied via existing class
+   combinations (bg-surface + rounded-xl,
+   glass-card, bg-primary buttons) so most
+   pages pick up consistent motion without
+   every card needing a bespoke class. All
+   of it collapses to near-nothing under
+   prefers-reduced-motion at the bottom.
+======================================== */
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes shimmer {
+  from {
+    background-position: -200% 0;
+  }
+
+  to {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes modal-backdrop-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modal-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@layer utilities {
+  /* Page-level entrance - applied once to each
+     page's outermost <main>.
+
+     fill-mode is "backwards", not "both" -
+     "both" would leave transform: translateY(0)
+     computed on the element forever after the
+     animation ends. Per spec, ANY non-none
+     transform - even a no-op translateY(0) -
+     makes that element a new containing block
+     for position:fixed descendants, which
+     silently breaks Modal.tsx's fixed backdrop
+     (rendered inline, not via a portal) the
+     moment the page is scrolled: the backdrop
+     stops covering the true viewport and starts
+     tracking this ancestor's position in the
+     document instead. "backwards" only applies
+     the from-state before the animation starts;
+     once it ends, transform reverts to the
+     element's un-animated value (none), which
+     is visually identical to the keyframe's
+     to-state here anyway. */
+  .animate-page-in {
+    animation: fade-in-up 420ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  }
+
+  /* Auto-staggers up to 12 direct children -
+     drop onto a grid/list container instead of
+     hand-timing every card. Same fill-mode
+     reasoning as .animate-page-in above - a
+     staggered card can itself be an ancestor of
+     a Modal invocation (e.g. a result card that
+     renders its own "View report" modal), so it
+     needs the same fix.
+
+     No static opacity: 0 here on purpose -
+     "backwards" fill-mode already applies the
+     keyframe's from-state (opacity: 0) for the
+     entire animation-delay period on its own; a
+     separate static rule would persist after the
+     animation ends (since it's not part of the
+     animation itself) and leave every item
+     invisible once its animation finishes. */
+  .animate-stagger > * {
+    animation: fade-in-up 420ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  }
+
+  .animate-stagger > *:nth-child(1) { animation-delay: 0ms; }
+  .animate-stagger > *:nth-child(2) { animation-delay: 40ms; }
+  .animate-stagger > *:nth-child(3) { animation-delay: 80ms; }
+  .animate-stagger > *:nth-child(4) { animation-delay: 120ms; }
+  .animate-stagger > *:nth-child(5) { animation-delay: 160ms; }
+  .animate-stagger > *:nth-child(6) { animation-delay: 200ms; }
+  .animate-stagger > *:nth-child(7) { animation-delay: 240ms; }
+  .animate-stagger > *:nth-child(8) { animation-delay: 280ms; }
+  .animate-stagger > *:nth-child(9) { animation-delay: 320ms; }
+  .animate-stagger > *:nth-child(10) { animation-delay: 360ms; }
+  .animate-stagger > *:nth-child(11) { animation-delay: 400ms; }
+  .animate-stagger > *:nth-child(n + 12) { animation-delay: 440ms; }
+
+  .animate-fade-in {
+    animation: fade-in 250ms ease-out both;
+  }
+
+  /* Skeleton shimmer - drop-in replacement for
+     bare animate-pulse blocks. */
+  .skeleton-shimmer {
+    background: linear-gradient(
+      90deg,
+      rgb(15 23 42 / 0.06) 25%,
+      rgb(15 23 42 / 0.11) 37%,
+      rgb(15 23 42 / 0.06) 63%
+    );
+    background-size: 400% 100%;
+    animation: shimmer 1.6s ease-in-out infinite;
+  }
+
+  .modal-backdrop-in {
+    animation: modal-backdrop-in 180ms ease-out both;
+  }
+
+  .modal-backdrop-out {
+    animation: modal-backdrop-in 150ms ease-in reverse both;
+  }
+
+  .modal-panel-in {
+    animation: modal-panel-in 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .modal-panel-out {
+    animation: modal-panel-in 150ms ease-in reverse both;
+  }
+}
+
+/* Card hover response - subtle lift + shadow bloom on every card
+   built from the app's existing card conventions, plus a stronger
+   affordance on cards that are also marked interactive. No JS,
+   no per-page edits needed for the base effect. */
+.bg-surface.rounded-xl,
+.bg-surface.rounded-2xl,
+.glass-card,
+.glass-panel {
+  transition:
+    transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 220ms ease,
+    border-color 220ms ease;
+}
+
+@media (hover: hover) {
+  .bg-surface.rounded-xl:hover,
+  .bg-surface.rounded-2xl:hover,
+  .glass-card:hover {
+    transform: translateY(-2px);
+    box-shadow:
+      0 16px 40px rgb(79 70 229 / 0.16),
+      0 2px 6px rgb(15 23 42 / 0.06);
+  }
+
+  .card-interactive:hover {
+    transform: translateY(-3px);
+    border-color: var(--color-primary);
+  }
+}
+
+/* Button hover lift/glow - keyed to the app's existing button
+   utility combinations, so no per-page class changes are needed. */
+button,
+a.button {
+  transition:
+    transform 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 150ms ease,
+    background-color 150ms ease,
+    opacity 150ms ease,
+    border-color 150ms ease;
+}
+
+@media (hover: hover) {
+  button.bg-primary:not(:disabled):hover,
+  a.bg-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 20px rgb(79 70 229 / 0.35);
+  }
+
+  button.border-border-strong:not(:disabled):hover,
+  a.border-border-strong:hover {
+    transform: translateY(-1px);
+  }
+}
+
+button:not(:disabled):active {
+  transform: translateY(0) scale(0.98);
+}
+
+/* Number count-up target - a tiny fade so the digits settling into
+   place doesn't feel like a layout jump. */
+.count-up-value {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .animate-stagger > * {
+    opacity: 1;
+  }
+}

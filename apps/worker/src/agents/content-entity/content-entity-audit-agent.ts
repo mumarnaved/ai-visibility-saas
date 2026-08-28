@@ -16,8 +16,8 @@ import type {
 } from "./content-entity-audit-result.js";
 
 import {
-  analyzeWebsite,
-} from "../../services/website-analyzer.js";
+  getWebsiteAnalysis,
+} from "../../services/firecrawl-website-analyzer.js";
 
 import {
   saveContentEntityAudit,
@@ -67,10 +67,13 @@ export class ContentEntityAuditAgent
       }
 
       /*
-       * Reuse the existing website analyzer.
+       * Firecrawl first (handles JS-rendered
+       * pages, real markdown/metadata
+       * extraction), falling back to the
+       * regex analyzer on any failure.
        */
       const analysis =
-        await analyzeWebsite(
+        await getWebsiteAnalysis(
           auditInput.websiteUrl
         );
 

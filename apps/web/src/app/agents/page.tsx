@@ -1,22 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 
 import { authFetch } from "@/lib/auth";
+import {
+  loadActiveTenant,
+  type TenantSummary,
+} from "@/lib/tenant";
+import CountUpNumber from "@/components/CountUpNumber";
+import EmptyState from "@/components/EmptyState";
+import { SkeletonLine } from "@/components/Skeleton";
 
-type Tenant = {
-  id: string;
-  name: string;
-  website_url: string;
-  status: string;
-  plan: string;
-};
-
-type TenantResponse = {
-  success: boolean;
-  data?: Tenant;
-  error?: string;
-};
+type Tenant = TenantSummary;
 
 type Metrics = {
   totalQueries: number;
@@ -109,35 +105,16 @@ export default function AgentsPage() {
          LOAD TENANT
       ======================================== */
 
-      const tenantResponse =
-        await authFetch(
-          `${WORKER_API}/api/tenants/latest`,
-          {
-            cache: "no-store",
-          }
+      const { tenant: currentTenant } =
+        await loadActiveTenant(
+          WORKER_API
         );
 
-      if (!tenantResponse.ok) {
+      if (!currentTenant) {
         throw new Error(
-          `Tenant API returned ${tenantResponse.status}`
+          "No workspace found. Create one to get started."
         );
       }
-
-      const tenantResult: TenantResponse =
-        await tenantResponse.json();
-
-      if (
-        !tenantResult.success ||
-        !tenantResult.data
-      ) {
-        throw new Error(
-          tenantResult.error ||
-            "Unable to load workspace."
-        );
-      }
-
-      const currentTenant =
-        tenantResult.data;
 
       setTenant(currentTenant);
 
@@ -192,7 +169,7 @@ export default function AgentsPage() {
 
   async function runAgent() {
     if (!tenant) {
-      setError(
+      toast.error(
         "No workspace is available."
       );
 
@@ -200,7 +177,7 @@ export default function AgentsPage() {
     }
 
     if (!query.trim()) {
-      setError(
+      toast.error(
         "Please enter a query before running the audit."
       );
 
@@ -214,7 +191,6 @@ export default function AgentsPage() {
 
     try {
       setRunning(true);
-      setError("");
       setResult(null);
 
       const response =
@@ -264,6 +240,10 @@ export default function AgentsPage() {
 
       setResult(data.data);
 
+      toast.success(
+        "Stage 1 audit completed successfully."
+      );
+
       /* ========================================
          REFRESH METRICS
       ======================================== */
@@ -295,7 +275,7 @@ export default function AgentsPage() {
         err
       );
 
-      setError(
+      toast.error(
         err instanceof Error
           ? err.message
           : "Failed to run Stage 1 audit."
@@ -314,7 +294,7 @@ export default function AgentsPage() {
   }, []);
 
   return (
-    <main className="min-h-screen bg-page text-ink">
+    <main className="animate-page-in min-h-screen bg-page text-ink">
       <div className="mx-auto max-w-7xl px-5 py-8 sm:px-8">
 
         {/* ========================================
@@ -365,7 +345,7 @@ export default function AgentsPage() {
            AGENT STATUS
         ======================================== */}
 
-        <div className="mt-8 grid gap-5 lg:grid-cols-3">
+        <div className="animate-stagger mt-8 grid gap-5 lg:grid-cols-3">
 
           <div className="rounded-xl border border-border bg-surface shadow-sm p-6 lg:col-span-2">
 
@@ -412,7 +392,7 @@ export default function AgentsPage() {
 
             {/* AGENT CONFIGURATION */}
 
-            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+            <div className="animate-stagger mt-6 grid gap-3 sm:grid-cols-2">
 
               <div className="rounded-lg border border-border bg-muted p-4">
                 <div className="text-xs text-ink-muted">
@@ -470,9 +450,9 @@ export default function AgentsPage() {
 
             {loading ? (
               <div className="mt-4 space-y-3">
-                <div className="h-5 w-32 animate-pulse rounded bg-border" />
-                <div className="h-4 w-full animate-pulse rounded bg-border" />
-                <div className="h-4 w-2/3 animate-pulse rounded bg-border" />
+                <SkeletonLine width="45%" className="h-5" />
+                <SkeletonLine width="100%" />
+                <SkeletonLine width="65%" />
               </div>
             ) : tenant ? (
               <>
@@ -505,9 +485,12 @@ export default function AgentsPage() {
                 </div>
               </>
             ) : (
-              <p className="mt-3 text-sm text-ink-muted">
-                No workspace found.
-              </p>
+              <EmptyState
+                icon="link"
+                title="No workspace found"
+                description="Add a website to get started."
+                className="mt-3 border-none bg-transparent p-0 shadow-none"
+              />
             )}
 
           </div>
@@ -694,7 +677,12 @@ export default function AgentsPage() {
 
                 <span className="w-fit rounded-full bg-muted px-3 py-1 text-xs font-semibold text-ink-secondary">
                   Overall score:{" "}
-                  {result.auditReport.overallScore}
+                  <CountUpNumber
+                    value={
+                      result.auditReport
+                        .overallScore
+                    }
+                  />
                   /100
                 </span>
 
@@ -718,7 +706,7 @@ export default function AgentsPage() {
 
               {/* CATEGORY SCORES */}
 
-              <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="animate-stagger mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
 
                 {(
                   [
@@ -815,7 +803,7 @@ export default function AgentsPage() {
             </p>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="animate-stagger grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
 
             <div className="rounded-xl border border-border bg-surface shadow-sm p-5">
               <div className="text-sm text-ink-muted">
@@ -823,9 +811,15 @@ export default function AgentsPage() {
               </div>
 
               <div className="mt-2 text-2xl font-bold">
-                {loading
-                  ? "—"
-                  : metrics?.totalQueries ?? 0}
+                {loading ? (
+                  <SkeletonLine width="3rem" className="h-6" />
+                ) : (
+                  <CountUpNumber
+                    value={
+                      metrics?.totalQueries ?? 0
+                    }
+                  />
+                )}
               </div>
             </div>
 
@@ -835,9 +829,15 @@ export default function AgentsPage() {
               </div>
 
               <div className="mt-2 text-2xl font-bold">
-                {loading
-                  ? "—"
-                  : metrics?.mentionedQueries ?? 0}
+                {loading ? (
+                  <SkeletonLine width="3rem" className="h-6" />
+                ) : (
+                  <CountUpNumber
+                    value={
+                      metrics?.mentionedQueries ?? 0
+                    }
+                  />
+                )}
               </div>
 
               <div className="mt-1 text-xs text-ink-faint">
@@ -853,22 +853,29 @@ export default function AgentsPage() {
               </div>
 
               <div className="mt-2 text-2xl font-bold">
-                {loading
-                  ? "—"
-                  : metrics?.averagePosition ??
-                    "—"}
+                {loading ? (
+                  <SkeletonLine width="3rem" className="h-6" />
+                ) : (
+                  metrics?.averagePosition ?? "—"
+                )}
               </div>
             </div>
 
             <div className="rounded-xl border border-border bg-surface shadow-sm p-5">
               <div className="text-sm text-ink-muted">
-                Visibility score
+                Citation visibility score
               </div>
 
               <div className="mt-2 text-2xl font-bold">
-                {loading
-                  ? "—"
-                  : metrics?.visibilityScore ?? 0}
+                {loading ? (
+                  <SkeletonLine width="3rem" className="h-6" />
+                ) : (
+                  <CountUpNumber
+                    value={
+                      metrics?.visibilityScore ?? 0
+                    }
+                  />
+                )}
               </div>
 
               <div className="mt-1 text-xs text-ink-faint">

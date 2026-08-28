@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 
 import { authFetch } from "@/lib/auth";
+import { setSelectedTenantId } from "@/lib/tenant";
 import DomainVerificationPanel from "@/components/DomainVerificationPanel";
 
 type Tenant = {
@@ -145,6 +147,10 @@ export default function OnboardingPage() {
          here - just domain ownership verification.
       ======================================== */
 
+      setSelectedTenantId(
+        tenantResult.data.id
+      );
+
       setTenant(tenantResult.data);
       setStep("verify");
       setMessage("");
@@ -180,14 +186,19 @@ export default function OnboardingPage() {
     }, 700);
   }
 
+  function handleDomainVerified() {
+    toast.success("Domain verified!");
+    goToDashboard();
+  }
+
   return (
-    <main className="min-h-screen bg-[#f7f8fa] text-[#111827]">
+    <main className="animate-page-in min-h-screen bg-page text-ink">
 
       {/* ========================================
           HEADER
       ======================================== */}
 
-      <header className="flex h-16 items-center justify-between border-b border-[#e5e7eb] bg-white px-5 sm:px-8">
+      <header className="flex h-16 items-center justify-between border-b border-border bg-surface px-5 sm:px-8">
 
         <Link
           href="/"
@@ -198,7 +209,7 @@ export default function OnboardingPage() {
 
         <Link
           href="/"
-          className="text-sm font-medium text-[#6b7280] transition hover:text-[#111827]"
+          className="text-sm font-medium text-ink-muted transition hover:text-ink"
         >
           Back to dashboard
         </Link>
@@ -219,7 +230,7 @@ export default function OnboardingPage() {
 
           <div className="mb-10">
 
-            <div className="flex items-center justify-between text-xs font-medium text-[#6b7280]">
+            <div className="flex items-center justify-between text-xs font-medium text-ink-muted">
 
               <span>
                 {step === "form"
@@ -239,10 +250,10 @@ export default function OnboardingPage() {
 
             </div>
 
-            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[#e5e7eb]">
+            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-border">
 
               <div
-                className={`h-full rounded-full bg-[#111827] transition-all duration-500 ${
+                className={`h-full rounded-full bg-primary transition-all duration-500 ${
                   step === "complete"
                     ? "w-full"
                     : step === "verify"
@@ -256,7 +267,10 @@ export default function OnboardingPage() {
           </div>
 
           {step === "form" && (
-          <>
+          <div
+            key="form"
+            className="animate-fade-in"
+          >
 
           {/* ========================================
               HEADING
@@ -264,7 +278,7 @@ export default function OnboardingPage() {
 
           <div className="mb-8">
 
-            <p className="text-sm font-medium text-[#6b7280]">
+            <p className="text-sm font-medium text-ink-muted">
               Get started
             </p>
 
@@ -272,7 +286,7 @@ export default function OnboardingPage() {
               Connect your website
             </h1>
 
-            <p className="mt-3 max-w-xl text-sm leading-6 text-[#6b7280]">
+            <p className="mt-3 max-w-xl text-sm leading-6 text-ink-muted">
               Tell us about the website and brand you
               want to monitor. We will create your
               workspace so you can start running audits.
@@ -286,7 +300,7 @@ export default function OnboardingPage() {
 
           <form
             onSubmit={handleSubmit}
-            className="rounded-xl border border-[#e5e7eb] bg-white p-6 sm:p-8"
+            className="rounded-xl border border-border bg-surface p-6 shadow-sm sm:p-8"
           >
 
               {/* COMPANY */}
@@ -300,7 +314,7 @@ export default function OnboardingPage() {
                   Company or brand name
                 </label>
 
-                <p className="mt-1 text-xs text-[#6b7280]">
+                <p className="mt-1 text-xs text-ink-muted">
                   The name of the brand you want to track.
                 </p>
 
@@ -315,7 +329,7 @@ export default function OnboardingPage() {
                   }
                   placeholder="e.g. Acme"
                   disabled={loading}
-                  className="mt-3 w-full rounded-lg border border-[#d1d5db] bg-white px-3 py-2.5 text-sm outline-none transition placeholder:text-[#9ca3af] focus:border-[#111827] focus:ring-1 focus:ring-[#111827] disabled:bg-[#f9fafb]"
+                  className="mt-3 w-full rounded-lg border border-border-strong bg-surface px-3 py-2.5 text-sm outline-none transition placeholder:text-ink-faint focus:border-primary focus:ring-1 focus:ring-primary disabled:bg-muted"
                 />
 
               </div>
@@ -331,7 +345,7 @@ export default function OnboardingPage() {
                   Website URL
                 </label>
 
-                <p className="mt-1 text-xs text-[#6b7280]">
+                <p className="mt-1 text-xs text-ink-muted">
                   Enter the website you want to analyze.
                 </p>
 
@@ -346,23 +360,23 @@ export default function OnboardingPage() {
                   }
                   placeholder="https://example.com"
                   disabled={loading}
-                  className="mt-3 w-full rounded-lg border border-[#d1d5db] bg-white px-3 py-2.5 text-sm outline-none transition placeholder:text-[#9ca3af] focus:border-[#111827] focus:ring-1 focus:ring-[#111827] disabled:bg-[#f9fafb]"
+                  className="mt-3 w-full rounded-lg border border-border-strong bg-surface px-3 py-2.5 text-sm outline-none transition placeholder:text-ink-faint focus:border-primary focus:ring-1 focus:ring-primary disabled:bg-muted"
                 />
 
               </div>
 
               {/* INFO */}
 
-              <div className="mt-6 rounded-lg bg-[#f9fafb] p-4">
+              <div className="mt-6 rounded-lg bg-muted p-4">
 
                 <div className="text-sm font-semibold">
                   What happens next?
                 </div>
 
-                <div className="mt-3 space-y-2 text-xs leading-5 text-[#6b7280]">
+                <div className="mt-3 space-y-2 text-xs leading-5 text-ink-muted">
 
                   <div className="flex gap-2">
-                    <span className="font-semibold text-[#111827]">
+                    <span className="font-semibold text-ink">
                       1.
                     </span>
 
@@ -372,7 +386,7 @@ export default function OnboardingPage() {
                   </div>
 
                   <div className="flex gap-2">
-                    <span className="font-semibold text-[#111827]">
+                    <span className="font-semibold text-ink">
                       2.
                     </span>
 
@@ -384,7 +398,7 @@ export default function OnboardingPage() {
                   </div>
 
                   <div className="flex gap-2">
-                    <span className="font-semibold text-[#111827]">
+                    <span className="font-semibold text-ink">
                       3.
                     </span>
 
@@ -402,7 +416,7 @@ export default function OnboardingPage() {
               {/* MESSAGE */}
 
               {message && (
-                <div className="mt-5 rounded-lg border border-[#e5e7eb] bg-[#f9fafb] px-4 py-3 text-sm text-[#4b5563]">
+                <div className="animate-fade-in mt-5 rounded-lg border border-border bg-muted px-4 py-3 text-sm text-ink-secondary">
                   {message}
                 </div>
               )}
@@ -413,7 +427,7 @@ export default function OnboardingPage() {
 
                 <Link
                   href="/"
-                  className={`rounded-lg px-4 py-2.5 text-center text-sm font-medium text-[#6b7280] transition hover:bg-[#f3f4f6] hover:text-[#111827] ${
+                  className={`rounded-lg px-4 py-2.5 text-center text-sm font-medium text-ink-muted transition hover:bg-muted hover:text-ink ${
                     loading
                       ? "pointer-events-none opacity-50"
                       : ""
@@ -425,7 +439,7 @@ export default function OnboardingPage() {
                 <button
                   type="submit"
                   disabled={loading}
-                  className="rounded-lg bg-[#111827] px-5 py-2.5 text-sm font-medium text-white transition hover:bg-[#1f2937] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-white transition hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {loading
                     ? "Setting up..."
@@ -436,7 +450,7 @@ export default function OnboardingPage() {
 
             </form>
 
-          </>
+          </div>
           )}
 
           {/* ========================================
@@ -444,11 +458,14 @@ export default function OnboardingPage() {
           ======================================== */}
 
           {step === "verify" && tenant && (
-          <>
+          <div
+            key="verify"
+            className="animate-fade-in"
+          >
 
             <div className="mb-8">
 
-              <p className="text-sm font-medium text-[#6b7280]">
+              <p className="text-sm font-medium text-ink-muted">
                 Almost there
               </p>
 
@@ -456,7 +473,7 @@ export default function OnboardingPage() {
                 Verify your domain
               </h1>
 
-              <p className="mt-3 max-w-xl text-sm leading-6 text-[#6b7280]">
+              <p className="mt-3 max-w-xl text-sm leading-6 text-ink-muted">
                 {tenant.name} has been created. Verify
                 you own {tenant.websiteUrl} to unlock
                 audits, or skip for now and verify later.
@@ -470,20 +487,20 @@ export default function OnboardingPage() {
               verificationToken={
                 tenant.verificationToken ?? ""
               }
-              onVerified={goToDashboard}
+              onVerified={handleDomainVerified}
             />
 
             <div className="mt-6 flex justify-end">
               <button
                 type="button"
                 onClick={goToDashboard}
-                className="rounded-lg px-4 py-2.5 text-sm font-medium text-[#6b7280] transition hover:bg-[#f3f4f6] hover:text-[#111827]"
+                className="rounded-lg px-4 py-2.5 text-sm font-medium text-ink-muted transition hover:bg-muted hover:text-ink"
               >
                 Skip for now
               </button>
             </div>
 
-          </>
+          </div>
           )}
 
           {/* ========================================
@@ -491,8 +508,11 @@ export default function OnboardingPage() {
           ======================================== */}
 
           {step === "complete" && (
-            <div className="rounded-xl border border-[#e5e7eb] bg-white p-8 text-center">
-              <p className="text-sm text-[#6b7280]">
+            <div
+              key="complete"
+              className="animate-fade-in rounded-xl border border-border bg-surface p-8 text-center shadow-sm"
+            >
+              <p className="text-sm text-ink-muted">
                 {message || "Redirecting..."}
               </p>
             </div>

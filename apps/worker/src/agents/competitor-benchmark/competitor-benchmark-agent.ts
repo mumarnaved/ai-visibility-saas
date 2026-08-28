@@ -19,6 +19,15 @@ import {
   saveCompetitorBenchmark,
 } from "../../database/postgres/competitor-benchmark/competitor-benchmark-repository.js";
 
+import {
+  getSiteIndexSignals,
+} from "../shared/serpapi-client.js";
+
+interface SerpApiMetrics {
+  organicKeywords: number | null;
+  dataNotes: string[];
+}
+
 /* ========================================
    COMPETITOR BENCHMARK AGENT
 ======================================== */
@@ -258,6 +267,11 @@ export class CompetitorBenchmarkAgent
           competitor.websiteUrl
         );
 
+      const serpApiMetrics =
+        await this.getSerpApiMetrics(
+          competitor.websiteUrl
+        );
+
       results.push({
         competitor:
           competitor.name,
@@ -269,7 +283,7 @@ export class CompetitorBenchmarkAgent
           null,
 
         organicKeywords:
-          null,
+          serpApiMetrics.organicKeywords,
 
         estimatedTraffic:
           null,
@@ -290,8 +304,12 @@ export class CompetitorBenchmarkAgent
         gaps:
           this.buildGaps(
             structuralScore,
-            contentScore
+            contentScore,
+            serpApiMetrics.organicKeywords
           ),
+
+        dataNotes:
+          serpApiMetrics.dataNotes,
       });
     }
 
@@ -315,18 +333,24 @@ export class CompetitorBenchmarkAgent
         input.websiteUrl
       );
 
+    const serpApiMetrics =
+      await this.getSerpApiMetrics(
+        input.websiteUrl
+      );
+
     return {
       /*
-       * These fields become populated when
-       * DataForSEO/Ubersuggest adapters are
-       * connected.
+       * domainAuthority/estimatedTraffic/backlinks
+       * have no honest free-tier proxy (see
+       * dataNotes) and stay null until a paid
+       * SEO data provider is connected.
        */
 
       domainAuthority:
         null as number | null,
 
       organicKeywords:
-        null as number | null,
+        serpApiMetrics.organicKeywords,
 
       estimatedTraffic:
         null as number | null,
@@ -337,7 +361,97 @@ export class CompetitorBenchmarkAgent
       structuralScore,
 
       contentScore,
+
+      dataNotes:
+        serpApiMetrics.dataNotes,
     };
+  }
+
+  /* ========================================
+     SERPAPI METRICS
+
+     Uses a single `site:{domain}` SerpApi
+     search per competitor/tenant to estimate
+     an indexed-page count as a free-tier proxy
+     for organic footprint. domainAuthority,
+     estimatedTraffic and backlinks have no
+     honest free-tier equivalent and stay null
+     - dataNotes explains why, matching the
+     honesty pattern used for other
+     synthetic/estimated data in this codebase.
+  ======================================== */
+
+  private async getSerpApiMetrics(
+    websiteUrl?: string
+  ): Promise<SerpApiMetrics> {
+    const dataNotes: string[] = [
+      "Domain authority, estimated traffic and backlink counts are not available from any free-tier data source and are left unset rather than estimated.",
+    ];
+
+    if (!websiteUrl) {
+      dataNotes.push(
+        "No website URL was provided, so indexed-page data could not be looked up."
+      );
+
+      return {
+        organicKeywords: null,
+        dataNotes,
+      };
+    }
+
+    let domain: string;
+
+    try {
+      domain = new URL(
+        websiteUrl
+      ).hostname;
+    } catch {
+      dataNotes.push(
+        "The website URL could not be parsed, so indexed-page data could not be looked up."
+      );
+
+      return {
+        organicKeywords: null,
+        dataNotes,
+      };
+    }
+
+    try {
+      const signals =
+        await getSiteIndexSignals(
+          domain
+        );
+
+      dataNotes.push(
+        "Organic keywords figure is an estimate derived from Google's indexed-page count for this domain (via SerpApi), not a verified ranking-keyword count."
+      );
+
+      if (signals.wasQueryBroadened) {
+        dataNotes.push(
+          "Google broadened the site: search, suggesting very limited indexed content for this domain."
+        );
+      }
+
+      return {
+        organicKeywords:
+          signals.indexedPagesEstimate,
+
+        dataNotes,
+      };
+    } catch (error) {
+      dataNotes.push(
+        `SerpApi lookup was unavailable: ${
+          error instanceof Error
+            ? error.message
+            : "unknown error"
+        }`
+      );
+
+      return {
+        organicKeywords: null,
+        dataNotes,
+      };
+    }
   }
 
   /* ========================================
@@ -667,6 +781,9 @@ export class CompetitorBenchmarkAgent
       number | null,
 
     contentScore:
+      number | null,
+
+    indexedPagesEstimate?:
       number | null
   ): string[] {
     const gaps: string[] =
@@ -687,6 +804,16 @@ export class CompetitorBenchmarkAgent
     ) {
       gaps.push(
         "Content structure may limit search and AI extraction."
+      );
+    }
+
+    if (
+      indexedPagesEstimate !== null &&
+      indexedPagesEstimate !== undefined &&
+      indexedPagesEstimate < 10
+    ) {
+      gaps.push(
+        "Very few indexed pages were found for this domain, suggesting limited content footprint."
       );
     }
 

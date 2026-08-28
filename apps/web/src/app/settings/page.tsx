@@ -1,40 +1,237 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
+import { authFetch } from "../../lib/auth";
+import {
+  loadActiveTenant,
+  type TenantSummary,
+} from "../../lib/tenant";
 
-const TENANT_ID =
-  "c32e1840-fb74-4b3d-bf56-f7a97af32a8e";
-
-const WORKER_API =
+const API_BASE_URL =
   "http://localhost:4000";
 
+type Tenant = TenantSummary;
+
+type PlanTier =
+  | "free"
+  | "growth"
+  | "scale"
+  | "enterprise"
+  | "white_label";
+
+interface BillingStatus {
+  planTier: PlanTier;
+  status: string;
+  websiteLimit: number | null;
+  tenantCount: number;
+  currentPeriodEnd: string | null;
+}
+
+const PLAN_LABELS: Record<
+  PlanTier,
+  string
+> = {
+  free: "Free Audit",
+  growth: "Growth",
+  scale: "Scale",
+  enterprise: "Enterprise",
+  white_label: "White-Label / Reseller",
+};
+
+const SELF_SERVE_PLANS: {
+  tier: "growth" | "scale";
+  name: string;
+  price: string;
+  description: string;
+  features: string[];
+}[] = [
+  {
+    tier: "growth",
+    name: "Growth",
+    price: "$29/mo",
+    description:
+      "Full plan with monthly execution and monitoring, one website.",
+    features: [
+      "AI visibility audit",
+      "Content plan generation",
+      "Monthly execution & monitoring",
+      "1 website",
+    ],
+  },
+  {
+    tier: "scale",
+    name: "Scale",
+    price: "$99/mo",
+    description:
+      "Weekly execution and monitoring, GTM management, up to 5 websites.",
+    features: [
+      "Everything in Growth",
+      "Weekly execution & monitoring",
+      "GTM management",
+      "Up to 5 websites",
+    ],
+  },
+];
+
 export default function SettingsPage() {
-  const [workspaceName, setWorkspaceName] =
-    useState("SoftwareDome");
+  const [tenant, setTenant] =
+    useState<Tenant | null>(null);
 
-  const [websiteUrl, setWebsiteUrl] =
-    useState("https://softwaredome.com");
+  const [billing, setBilling] =
+    useState<BillingStatus | null>(
+      null
+    );
 
-  const [plan] =
-    useState("Starter");
+  const [loading, setLoading] =
+    useState(true);
 
-  const [saved, setSaved] =
-    useState(false);
+  const [error, setError] =
+    useState("");
 
-  function handleSave(
-    event: React.FormEvent<HTMLFormElement>
-  ) {
-    event.preventDefault();
+  const [upgrading, setUpgrading] =
+    useState<
+      "growth" | "scale" | null
+    >(null);
 
-    setSaved(true);
+  async function loadData() {
+    try {
+      setLoading(true);
+      setError("");
 
-    setTimeout(() => {
-      setSaved(false);
-    }, 3000);
+      const { tenant: loadedTenant } =
+        await loadActiveTenant(
+          API_BASE_URL
+        );
+
+      setTenant(loadedTenant);
+
+      const billingResponse =
+        await authFetch(
+          `${API_BASE_URL}/api/billing/status`,
+          { cache: "no-store" }
+        );
+
+      if (!billingResponse.ok) {
+        const text =
+          await billingResponse.text();
+
+        throw new Error(
+          `Billing status API returned ${billingResponse.status}: ${text}`
+        );
+      }
+
+      const billingJson =
+        await billingResponse.json();
+
+      if (
+        billingJson.success &&
+        billingJson.data
+      ) {
+        setBilling(
+          billingJson.data as BillingStatus
+        );
+      }
+    } catch (err) {
+      console.error(
+        "Settings load failed:",
+        err
+      );
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load settings."
+      );
+    } finally {
+      setLoading(false);
+    }
   }
 
+  useEffect(() => {
+    loadData();
+
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const params = new URLSearchParams(
+      window.location.search
+    );
+
+    if (
+      params.get("checkout") ===
+      "success"
+    ) {
+      toast.success(
+        "Your subscription is active. It may take a few seconds for your plan to update below."
+      );
+    } else if (
+      params.get("checkout") ===
+      "canceled"
+    ) {
+      toast(
+        "Checkout was canceled. You have not been charged."
+      );
+    }
+  }, []);
+
+  async function startUpgrade(
+    planTier: "growth" | "scale"
+  ) {
+    try {
+      setUpgrading(planTier);
+
+      const response = await authFetch(
+        `${API_BASE_URL}/api/billing/checkout`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+          body: JSON.stringify({
+            planTier,
+          }),
+        }
+      );
+
+      const data =
+        await response.json();
+
+      if (
+        !response.ok ||
+        !data.success
+      ) {
+        throw new Error(
+          data.error ||
+            "Failed to start checkout."
+        );
+      }
+
+      window.location.href =
+        data.data.url;
+    } catch (err) {
+      console.error(
+        "Checkout failed:",
+        err
+      );
+
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : "Failed to start checkout."
+      );
+
+      setUpgrading(null);
+    }
+  }
+
+  const currentPlanTier =
+    billing?.planTier ?? "free";
+
   return (
-    <main className="min-h-screen bg-page text-ink">
+    <main className="animate-page-in min-h-screen bg-page text-ink">
 
       <div className="mx-auto max-w-7xl px-5 py-8 sm:px-8">
 
@@ -47,21 +244,16 @@ export default function SettingsPage() {
 
           <p className="mt-2 text-sm text-ink-muted">
             Manage your workspace configuration
-            and AI visibility settings.
+            and billing.
           </p>
         </div>
 
-        {/* SUCCESS */}
+        {/* ERROR */}
 
-        {saved && (
-          <div className="mt-6 rounded-xl border border-success-border bg-success-bg p-4">
-            <div className="text-sm font-semibold text-success-text">
-              Settings saved
-            </div>
-
-            <p className="mt-1 text-sm text-success-text">
-              Your workspace settings have been
-              updated successfully.
+        {error && (
+          <div className="mt-6 rounded-xl border border-danger-border bg-danger-bg p-4">
+            <p className="text-sm text-danger-text">
+              {error}
             </p>
           </div>
         )}
@@ -81,145 +273,193 @@ export default function SettingsPage() {
             </p>
           </div>
 
-          <form
-            onSubmit={handleSave}
-            className="p-6"
-          >
-
-            {/* WORKSPACE NAME */}
+          <div className="p-6">
 
             <div>
-              <label
-                htmlFor="workspaceName"
-                className="block text-sm font-medium text-ink-secondary"
-              >
+              <div className="text-xs font-medium uppercase tracking-wide text-ink-faint">
                 Workspace name
-              </label>
+              </div>
 
-              <input
-                id="workspaceName"
-                type="text"
-                value={workspaceName}
-                onChange={(event) =>
-                  setWorkspaceName(
-                    event.target.value
-                  )
-                }
-                className="mt-2 w-full max-w-xl rounded-lg border border-border-strong px-3 py-2.5 text-sm outline-none transition focus:border-primary focus:ring-1 focus:ring-primary"
-              />
-            </div>
-
-            {/* WEBSITE */}
-
-            <div className="mt-5">
-              <label
-                htmlFor="websiteUrl"
-                className="block text-sm font-medium text-ink-secondary"
-              >
-                Website URL
-              </label>
-
-              <input
-                id="websiteUrl"
-                type="url"
-                value={websiteUrl}
-                onChange={(event) =>
-                  setWebsiteUrl(
-                    event.target.value
-                  )
-                }
-                className="mt-2 w-full max-w-xl rounded-lg border border-border-strong px-3 py-2.5 text-sm outline-none transition focus:border-primary focus:ring-1 focus:ring-primary"
-              />
-
-              <p className="mt-2 text-xs text-ink-faint">
-                This website is used as the primary
-                property for your visibility monitoring.
-              </p>
-            </div>
-
-            {/* PLAN */}
-
-            <div className="mt-5">
-              <label
-                htmlFor="plan"
-                className="block text-sm font-medium text-ink-secondary"
-              >
-                Current plan
-              </label>
-
-              <div
-                id="plan"
-                className="mt-2 flex w-full max-w-xl items-center justify-between rounded-lg border border-border bg-muted px-4 py-3"
-              >
-                <div>
-                  <div className="text-sm font-semibold">
-                    {plan}
-                  </div>
-
-                  <div className="mt-1 text-xs text-ink-faint">
-                    Current workspace subscription
-                  </div>
-                </div>
-
-                <span className="rounded-full bg-success-bg px-3 py-1 text-xs font-semibold text-success-text">
-                  Active
-                </span>
+              <div className="mt-2 text-sm font-medium">
+                {loading
+                  ? "—"
+                  : tenant?.name ?? "—"}
               </div>
             </div>
 
-            {/* SAVE */}
+            <div className="mt-5">
+              <div className="text-xs font-medium uppercase tracking-wide text-ink-faint">
+                Website URL
+              </div>
 
-            <div className="mt-7 flex justify-end">
-              <button
-                type="submit"
-                className="rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-white transition hover:bg-primary-hover"
-              >
-                Save changes
-              </button>
+              <div className="mt-2 text-sm font-medium">
+                {loading
+                  ? "—"
+                  : tenant?.website_url ??
+                    "—"}
+              </div>
             </div>
 
-          </form>
+          </div>
 
         </section>
 
-        {/* SYSTEM STATUS */}
+        {/* BILLING */}
 
         <section className="mt-6 rounded-xl border border-border bg-surface shadow-sm">
 
           <div className="border-b border-border px-6 py-5">
-
             <h2 className="text-base font-semibold">
-              System status
+              Billing
             </h2>
 
             <p className="mt-1 text-sm text-ink-muted">
-              Current status of the services powering
-              your workspace.
+              Your current plan and upgrade
+              options.
             </p>
-
           </div>
 
-          <div className="divide-y divide-border">
+          <div className="p-6">
 
-            <StatusRow
-              name="Worker API"
-              status="Connected"
-            />
+            {/* CURRENT PLAN */}
 
-            <StatusRow
-              name="PostgreSQL Database"
-              status="Connected"
-            />
+            <div className="flex w-full items-center justify-between rounded-lg border border-border bg-muted px-4 py-3">
+              <div>
+                <div className="text-sm font-semibold">
+                  {loading
+                    ? "—"
+                    : PLAN_LABELS[
+                        currentPlanTier
+                      ]}
+                </div>
 
-            <StatusRow
-              name="Tenant Workspace"
-              status="Active"
-            />
+                <div className="mt-1 text-xs text-ink-faint">
+                  {loading || !billing
+                    ? "Loading plan details"
+                    : billing.websiteLimit ===
+                      null
+                    ? `${billing.tenantCount} website(s) used - unlimited plan`
+                    : `${billing.tenantCount} of ${billing.websiteLimit} website(s) used`}
+                </div>
+              </div>
 
-            <StatusRow
-              name="AI Visibility Agent"
-              status="Ready"
-            />
+              <span className="rounded-full bg-success-bg px-3 py-1 text-xs font-semibold text-success-text">
+                {loading || !billing
+                  ? "—"
+                  : billing.status}
+              </span>
+            </div>
+
+            {/* SELF-SERVE PLANS */}
+
+            <div className="animate-stagger mt-6 grid gap-4 sm:grid-cols-2">
+              {SELF_SERVE_PLANS.map(
+                (plan) => {
+                  const isCurrent =
+                    currentPlanTier ===
+                    plan.tier;
+
+                  return (
+                    <div
+                      key={plan.tier}
+                      className="card-interactive rounded-xl border border-border p-5 transition"
+                    >
+                      <div className="flex items-baseline justify-between">
+                        <div className="text-sm font-semibold">
+                          {plan.name}
+                        </div>
+
+                        <div className="text-sm font-bold">
+                          {plan.price}
+                        </div>
+                      </div>
+
+                      <p className="mt-2 text-xs text-ink-muted">
+                        {plan.description}
+                      </p>
+
+                      <ul className="mt-3 space-y-1">
+                        {plan.features.map(
+                          (feature) => (
+                            <li
+                              key={
+                                feature
+                              }
+                              className="text-xs text-ink-secondary"
+                            >
+                              • {feature}
+                            </li>
+                          )
+                        )}
+                      </ul>
+
+                      <button
+                        type="button"
+                        disabled={
+                          isCurrent ||
+                          upgrading !==
+                            null
+                        }
+                        onClick={() =>
+                          startUpgrade(
+                            plan.tier
+                          )
+                        }
+                        className="mt-4 w-full rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {isCurrent
+                          ? "Current plan"
+                          : upgrading ===
+                            plan.tier
+                          ? "Redirecting..."
+                          : `Upgrade to ${plan.name}`}
+                      </button>
+                    </div>
+                  );
+                }
+              )}
+            </div>
+
+            {/* CONTACT US PLANS */}
+
+            <div className="animate-stagger mt-4 grid gap-4 sm:grid-cols-2">
+
+              <div className="card-interactive rounded-xl border border-border-strong bg-muted p-5 transition">
+                <div className="text-sm font-semibold">
+                  Enterprise
+                </div>
+
+                <p className="mt-2 text-xs text-ink-muted">
+                  Dedicated database, custom SLA.
+                </p>
+
+                <a
+                  href="mailto:sales@example.com?subject=Enterprise%20plan"
+                  className="mt-4 inline-block w-full rounded-lg border border-border-strong px-4 py-2 text-center text-sm font-medium transition hover:bg-surface"
+                >
+                  Contact us
+                </a>
+              </div>
+
+              <div className="card-interactive rounded-xl border border-border-strong bg-muted p-5 transition">
+                <div className="text-sm font-semibold">
+                  White-Label / Reseller
+                </div>
+
+                <p className="mt-2 text-xs text-ink-muted">
+                  Resell AI visibility monitoring
+                  under your own brand.
+                </p>
+
+                <a
+                  href="mailto:sales@example.com?subject=White-Label%20plan"
+                  className="mt-4 inline-block w-full rounded-lg border border-border-strong px-4 py-2 text-center text-sm font-medium transition hover:bg-surface"
+                >
+                  Contact us
+                </a>
+              </div>
+
+            </div>
 
           </div>
 
@@ -249,7 +489,9 @@ export default function SettingsPage() {
             </div>
 
             <div className="mt-2 break-all rounded-lg bg-muted px-4 py-3 font-mono text-xs text-ink-secondary">
-              {TENANT_ID}
+              {loading
+                ? "—"
+                : tenant?.id ?? "—"}
             </div>
 
             <div className="mt-4 text-xs font-medium uppercase tracking-wide text-ink-faint">
@@ -257,7 +499,7 @@ export default function SettingsPage() {
             </div>
 
             <div className="mt-2 rounded-lg bg-muted px-4 py-3 font-mono text-xs text-ink-secondary">
-              {WORKER_API}
+              {API_BASE_URL}
             </div>
 
           </div>
@@ -267,33 +509,5 @@ export default function SettingsPage() {
       </div>
 
     </main>
-  );
-}
-
-function StatusRow({
-  name,
-  status,
-}: {
-  name: string;
-  status: string;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-4 px-6 py-4">
-
-      <div className="text-sm font-medium text-ink-secondary">
-        {name}
-      </div>
-
-      <div className="flex items-center gap-2">
-
-        <span className="h-2 w-2 rounded-full bg-success" />
-
-        <span className="text-xs font-semibold text-success-text">
-          {status}
-        </span>
-
-      </div>
-
-    </div>
   );
 }

@@ -2,23 +2,19 @@
 
 import { useEffect, useState } from "react";
 
+import { toast } from "sonner";
+
 import { authFetch } from "@/lib/auth";
+import {
+  loadActiveTenant,
+  type TenantSummary,
+} from "@/lib/tenant";
 import ExpandableJson from "@/components/ExpandableJson";
 import ExpandableMarkdown from "@/components/ExpandableMarkdown";
+import EmptyState from "@/components/EmptyState";
+import { SkeletonCard } from "@/components/Skeleton";
 
-type Tenant = {
-  id: string;
-  name: string;
-  website_url: string;
-  status: string;
-  plan: string;
-};
-
-type TenantResponse = {
-  success: boolean;
-  data?: Tenant;
-  error?: string;
-};
+type Tenant = TenantSummary;
 
 type ContentPlan = {
   id: string;
@@ -73,35 +69,16 @@ export default function ContentPlanPage() {
          LOAD TENANT
       ======================================== */
 
-      const tenantResponse =
-        await authFetch(
-          `${WORKER_API}/api/tenants/latest`,
-          {
-            cache: "no-store",
-          }
+      const { tenant: currentTenant } =
+        await loadActiveTenant(
+          WORKER_API
         );
 
-      if (!tenantResponse.ok) {
+      if (!currentTenant) {
         throw new Error(
-          `Tenant API returned ${tenantResponse.status}`
+          "No workspace found. Create one to get started."
         );
       }
-
-      const tenantResult: TenantResponse =
-        await tenantResponse.json();
-
-      if (
-        !tenantResult.success ||
-        !tenantResult.data
-      ) {
-        throw new Error(
-          tenantResult.error ||
-            "Unable to load workspace."
-        );
-      }
-
-      const currentTenant =
-        tenantResult.data;
 
       setTenant(currentTenant);
 
@@ -170,7 +147,6 @@ export default function ContentPlanPage() {
 
     try {
       setApproving(true);
-      setError("");
 
       const response =
         await authFetch(
@@ -195,13 +171,16 @@ export default function ContentPlanPage() {
       }
 
       setPlan(data.data);
+      toast.success(
+        "Content plan approved"
+      );
     } catch (err) {
       console.error(
         "Failed to approve content plan:",
         err
       );
 
-      setError(
+      toast.error(
         err instanceof Error
           ? err.message
           : "Failed to approve content plan."
@@ -237,7 +216,7 @@ export default function ContentPlanPage() {
     plan?.approvalStatus === "approved";
 
   return (
-    <main className="min-h-screen bg-page text-ink">
+    <main className="animate-page-in min-h-screen bg-page text-ink">
 
       <div className="mx-auto max-w-7xl px-5 py-8 sm:px-8">
 
@@ -300,9 +279,9 @@ export default function ContentPlanPage() {
         ======================================== */}
 
         {loading ? (
-          <div className="mt-6 space-y-4">
-            <div className="h-32 animate-pulse rounded-xl bg-surface" />
-            <div className="h-48 animate-pulse rounded-xl bg-surface" />
+          <div className="mt-6 animate-stagger space-y-4">
+            <SkeletonCard lines={2} />
+            <SkeletonCard lines={4} />
           </div>
         ) : notFound ? (
 
@@ -310,18 +289,12 @@ export default function ContentPlanPage() {
              EMPTY STATE
           ======================================== */
 
-          <div className="mt-6 rounded-xl border border-border bg-surface shadow-sm p-10 text-center">
-
-            <div className="text-sm font-semibold">
-              No content plan yet
-            </div>
-
-            <p className="mx-auto mt-2 max-w-md text-sm text-ink-muted">
-              A Stage 2 content plan hasn&apos;t been
-              created for this workspace yet.
-            </p>
-
-          </div>
+          <EmptyState
+            icon="document"
+            title="No content plan yet"
+            description="A Stage 2 content plan hasn't been created for this workspace yet."
+            className="mt-6"
+          />
         ) : plan ? (
 
           <>
@@ -506,7 +479,7 @@ function PlanListSection({
 
       ) : (
 
-        <div className="divide-y divide-border">
+        <div className="animate-stagger divide-y divide-border">
 
           {list.map((item, index) => (
             <PlanListItem
@@ -631,7 +604,7 @@ function RoadmapSection({
 
       ) : (
 
-        <div className="grid gap-0 sm:grid-cols-2">
+        <div className="animate-stagger grid gap-0 sm:grid-cols-2">
 
           {entries.map(([key, value]) => (
 

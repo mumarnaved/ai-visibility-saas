@@ -3,23 +3,18 @@
 import { useEffect, useState } from "react";
 
 import { authFetch } from "@/lib/auth";
+import {
+  loadActiveTenant,
+  type TenantSummary,
+} from "@/lib/tenant";
 import Markdown from "@/components/Markdown";
 import MarkdownPreview from "@/components/MarkdownPreview";
 import Modal from "@/components/Modal";
+import CountUpNumber from "@/components/CountUpNumber";
+import EmptyState from "@/components/EmptyState";
+import { SkeletonLine } from "@/components/Skeleton";
 
-type Tenant = {
-  id: string;
-  name: string;
-  website_url: string;
-  status: string;
-  plan: string;
-};
-
-type TenantResponse = {
-  success: boolean;
-  data?: Tenant;
-  error?: string;
-};
+type Tenant = TenantSummary;
 
 type Metrics = {
   totalQueries: number;
@@ -127,35 +122,16 @@ export default function ReportsPage() {
          LOAD TENANT
       ======================================== */
 
-      const tenantResponse =
-        await authFetch(
-          `${WORKER_API}/api/tenants/latest`,
-          {
-            cache: "no-store",
-          }
+      const { tenant: currentTenant } =
+        await loadActiveTenant(
+          WORKER_API
         );
 
-      if (!tenantResponse.ok) {
+      if (!currentTenant) {
         throw new Error(
-          `Tenant API returned ${tenantResponse.status}`
+          "No workspace found. Create one to get started."
         );
       }
-
-      const tenantResult: TenantResponse =
-        await tenantResponse.json();
-
-      if (
-        !tenantResult.success ||
-        !tenantResult.data
-      ) {
-        throw new Error(
-          tenantResult.error ||
-            "Unable to load workspace."
-        );
-      }
-
-      const currentTenant =
-        tenantResult.data;
 
       setTenant(currentTenant);
 
@@ -347,7 +323,7 @@ export default function ReportsPage() {
     );
 
   return (
-    <main className="min-h-screen bg-page text-ink">
+    <main className="animate-page-in min-h-screen bg-page text-ink">
 
       <div className="mx-auto max-w-7xl px-5 py-8 sm:px-8">
 
@@ -447,15 +423,19 @@ export default function ReportsPage() {
           <div className="rounded-xl border border-border bg-surface shadow-sm p-6">
 
             <div className="text-sm font-medium text-ink-muted">
-              AI Visibility Score
+              Citation Visibility Score
             </div>
 
             <div className="mt-4 flex items-end gap-2">
 
               <span className="text-5xl font-bold">
-                {loading
-                  ? "-"
-                  : visibilityScore}
+                {loading ? (
+                  "-"
+                ) : (
+                  <CountUpNumber
+                    value={visibilityScore}
+                  />
+                )}
               </span>
 
               <span className="pb-2 text-sm text-ink-faint">
@@ -485,7 +465,7 @@ export default function ReportsPage() {
 
           {/* METRICS */}
 
-          <div className="grid gap-4 sm:grid-cols-2 lg:col-span-2">
+          <div className="animate-stagger grid gap-4 sm:grid-cols-2 lg:col-span-2">
 
             <div className="rounded-xl border border-border bg-surface shadow-sm p-5">
 
@@ -494,9 +474,15 @@ export default function ReportsPage() {
               </div>
 
               <div className="mt-2 text-3xl font-bold">
-                {loading
-                  ? "-"
-                  : metrics?.totalQueries ?? 0}
+                {loading ? (
+                  "-"
+                ) : (
+                  <CountUpNumber
+                    value={
+                      metrics?.totalQueries ?? 0
+                    }
+                  />
+                )}
               </div>
 
             </div>
@@ -508,9 +494,15 @@ export default function ReportsPage() {
               </div>
 
               <div className="mt-2 text-3xl font-bold">
-                {loading
-                  ? "-"
-                  : metrics?.mentionedQueries ?? 0}
+                {loading ? (
+                  "-"
+                ) : (
+                  <CountUpNumber
+                    value={
+                      metrics?.mentionedQueries ?? 0
+                    }
+                  />
+                )}
               </div>
 
               <div className="mt-1 text-xs text-ink-faint">
@@ -548,9 +540,15 @@ export default function ReportsPage() {
               </div>
 
               <div className="mt-2 text-3xl font-bold">
-                {loading
-                  ? "-"
-                  : metrics?.citationCount ?? 0}
+                {loading ? (
+                  "-"
+                ) : (
+                  <CountUpNumber
+                    value={
+                      metrics?.citationCount ?? 0
+                    }
+                  />
+                )}
               </div>
 
             </div>
@@ -585,9 +583,9 @@ export default function ReportsPage() {
                 (item) => (
                   <div key={item}>
 
-                    <div className="h-4 w-32 animate-pulse rounded bg-border" />
+                    <SkeletonLine width="8rem" className="h-4" />
 
-                    <div className="mt-3 h-2 animate-pulse rounded bg-border" />
+                    <SkeletonLine width="100%" className="mt-3 h-2" />
 
                   </div>
                 )
@@ -595,7 +593,7 @@ export default function ReportsPage() {
 
             </div>
           ) : (
-            <div className="divide-y divide-border">
+            <div className="animate-stagger divide-y divide-border">
 
               {metrics?.categories &&
               metrics.categories.length > 0 ? (
@@ -659,8 +657,12 @@ export default function ReportsPage() {
 
               ) : (
 
-                <div className="p-6 text-sm text-ink-muted">
-                  No category data available yet.
+                <div className="p-6">
+                  <EmptyState
+                    icon="chart"
+                    title="No category data yet"
+                    description="Run tracked queries across categories to see performance here."
+                  />
                 </div>
 
               )}
@@ -694,7 +696,7 @@ export default function ReportsPage() {
             {metrics?.competitors &&
             metrics.competitors.length > 0 ? (
 
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="animate-stagger grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
 
                 {metrics.competitors.map(
                   (competitor) => (
@@ -723,9 +725,11 @@ export default function ReportsPage() {
 
             ) : (
 
-              <p className="text-sm text-ink-muted">
-                No competitors detected yet.
-              </p>
+              <EmptyState
+                icon="search"
+                title="No competitors detected yet"
+                description="Competitors mentioned in AI-generated responses will show up here."
+              />
 
             )}
 
@@ -764,9 +768,9 @@ export default function ReportsPage() {
                     className="rounded-lg border border-border p-5"
                   >
 
-                    <div className="h-4 w-3/4 animate-pulse rounded bg-border" />
+                    <SkeletonLine width="75%" className="h-4" />
 
-                    <div className="mt-3 h-3 w-1/3 animate-pulse rounded bg-border" />
+                    <SkeletonLine width="33%" className="mt-3 h-3" />
 
                   </div>
 
@@ -777,22 +781,17 @@ export default function ReportsPage() {
 
           ) : results.length === 0 ? (
 
-            <div className="p-8 text-center">
-
-              <div className="text-sm font-semibold">
-                No AI results yet
-              </div>
-
-              <p className="mt-2 text-sm text-ink-muted">
-                Run a tracked query to generate
-                your first visibility result.
-              </p>
-
+            <div className="p-8">
+              <EmptyState
+                icon="document"
+                title="No AI results yet"
+                description="Run a tracked query to generate your first visibility result."
+              />
             </div>
 
           ) : (
 
-            <div className="space-y-4 p-6">
+            <div className="animate-stagger space-y-4 p-6">
 
               {results
                 .slice(0, 10)
@@ -885,13 +884,13 @@ export default function ReportsPage() {
 
                     <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-faint">
 
-                      <span>
+                      <span className="max-w-full break-all">
                         Provider:{" "}
                         {result.provider}
                       </span>
 
                       {result.model && (
-                        <span>
+                        <span className="max-w-full break-all">
                           Model:{" "}
                           {result.model}
                         </span>
@@ -935,12 +934,12 @@ export default function ReportsPage() {
 
           </div>
 
-          <div className="grid gap-0 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="animate-stagger grid gap-0 sm:grid-cols-2 lg:grid-cols-4">
 
             <div className="border-b border-border p-6 sm:border-r">
 
               <div className="text-xs font-semibold uppercase tracking-wide text-ink-muted">
-                Visibility
+                Citation Visibility
               </div>
 
               <div className="mt-2 text-lg font-bold">

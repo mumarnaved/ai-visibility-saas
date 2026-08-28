@@ -9,6 +9,8 @@ import {
   useRouter,
 } from "next/navigation";
 
+import { toast } from "sonner";
+
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL ??
   "http://localhost:4000";
@@ -122,6 +124,10 @@ export default function SignupPage() {
         )
       );
 
+      toast.success(
+        "Workspace created!"
+      );
+
       router.push("/");
     } catch (error) {
       setError(
@@ -135,78 +141,28 @@ export default function SignupPage() {
   }
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "24px",
-        background:
-          "#f8fafc",
-      }}
-    >
-      <div
-        style={{
-          width: "100%",
-          maxWidth: "480px",
-          background: "#ffffff",
-          border:
-            "1px solid #e2e8f0",
-          borderRadius: "16px",
-          padding: "32px",
-          boxShadow:
-            "0 10px 30px rgba(15, 23, 42, 0.08)",
-        }}
-      >
-        <div
-          style={{
-            marginBottom: "28px",
-          }}
-        >
-          <h1
-            style={{
-              margin: 0,
-              fontSize: "28px",
-              fontWeight: 700,
-              color: "#0f172a",
-            }}
-          >
+    <main className="animate-page-in flex min-h-screen items-center justify-center bg-page p-6 text-ink">
+
+      <div className="glass-panel w-full max-w-[480px] rounded-2xl p-8">
+
+        <div className="mb-7">
+          <h1 className="text-[28px] font-bold tracking-tight text-ink">
             Create your workspace
           </h1>
 
-          <p
-            style={{
-              marginTop: "8px",
-              marginBottom: 0,
-              color: "#64748b",
-              fontSize: "14px",
-            }}
-          >
-            Start monitoring your AI
-            visibility.
+          <p className="mt-2 text-sm text-ink-muted">
+            Start monitoring your AI visibility.
           </p>
         </div>
 
         <form
           onSubmit={handleSubmit}
-          style={{
-            display: "flex",
-            flexDirection:
-              "column",
-            gap: "16px",
-          }}
+          className="flex flex-col gap-4"
         >
           <div>
             <label
               htmlFor="fullName"
-              style={{
-                display: "block",
-                marginBottom: "7px",
-                fontSize: "14px",
-                fontWeight: 600,
-                color: "#334155",
-              }}
+              className="mb-1.5 block text-sm font-semibold text-ink-secondary"
             >
               Full name
             </label>
@@ -223,30 +179,14 @@ export default function SignupPage() {
               placeholder="Test User"
               required
               autoComplete="name"
-              style={{
-                width: "100%",
-                boxSizing:
-                  "border-box",
-                padding:
-                  "12px 14px",
-                border:
-                  "1px solid #cbd5e1",
-                borderRadius: "9px",
-                fontSize: "14px",
-              }}
+              className="w-full rounded-lg border border-border-strong bg-surface px-3.5 py-3 text-sm outline-none transition placeholder:text-ink-faint focus:border-primary focus:ring-1 focus:ring-primary"
             />
           </div>
 
           <div>
             <label
               htmlFor="workspaceName"
-              style={{
-                display: "block",
-                marginBottom: "7px",
-                fontSize: "14px",
-                fontWeight: 600,
-                color: "#334155",
-              }}
+              className="mb-1.5 block text-sm font-semibold text-ink-secondary"
             >
               Workspace name
             </label>
@@ -262,30 +202,14 @@ export default function SignupPage() {
               }
               placeholder="My Company"
               required
-              style={{
-                width: "100%",
-                boxSizing:
-                  "border-box",
-                padding:
-                  "12px 14px",
-                border:
-                  "1px solid #cbd5e1",
-                borderRadius: "9px",
-                fontSize: "14px",
-              }}
+              className="w-full rounded-lg border border-border-strong bg-surface px-3.5 py-3 text-sm outline-none transition placeholder:text-ink-faint focus:border-primary focus:ring-1 focus:ring-primary"
             />
           </div>
 
           <div>
             <label
               htmlFor="websiteUrl"
-              style={{
-                display: "block",
-                marginBottom: "7px",
-                fontSize: "14px",
-                fontWeight: 600,
-                color: "#334155",
-              }}
+              className="mb-1.5 block text-sm font-semibold text-ink-secondary"
             >
               Website URL
             </label>
@@ -302,30 +226,14 @@ export default function SignupPage() {
               placeholder="https://example.com"
               required
               autoComplete="url"
-              style={{
-                width: "100%",
-                boxSizing:
-                  "border-box",
-                padding:
-                  "12px 14px",
-                border:
-                  "1px solid #cbd5e1",
-                borderRadius: "9px",
-                fontSize: "14px",
-              }}
+              className="w-full rounded-lg border border-border-strong bg-surface px-3.5 py-3 text-sm outline-none transition placeholder:text-ink-faint focus:border-primary focus:ring-1 focus:ring-primary"
             />
           </div>
 
           <div>
             <label
               htmlFor="email"
-              style={{
-                display: "block",
-                marginBottom: "7px",
-                fontSize: "14px",
-                fontWeight: 600,
-                color: "#334155",
-              }}
+              className="mb-1.5 block text-sm font-semibold text-ink-secondary"
             >
               Email
             </label>
@@ -342,30 +250,14 @@ export default function SignupPage() {
               placeholder="you@example.com"
               required
               autoComplete="email"
-              style={{
-                width: "100%",
-                boxSizing:
-                  "border-box",
-                padding:
-                  "12px 14px",
-                border:
-                  "1px solid #cbd5e1",
-                borderRadius: "9px",
-                fontSize: "14px",
-              }}
+              className="w-full rounded-lg border border-border-strong bg-surface px-3.5 py-3 text-sm outline-none transition placeholder:text-ink-faint focus:border-primary focus:ring-1 focus:ring-primary"
             />
           </div>
 
           <div>
             <label
               htmlFor="password"
-              style={{
-                display: "block",
-                marginBottom: "7px",
-                fontSize: "14px",
-                fontWeight: 600,
-                color: "#334155",
-              }}
+              className="mb-1.5 block text-sm font-semibold text-ink-secondary"
             >
               Password
             </label>
@@ -383,33 +275,12 @@ export default function SignupPage() {
               required
               minLength={8}
               autoComplete="new-password"
-              style={{
-                width: "100%",
-                boxSizing:
-                  "border-box",
-                padding:
-                  "12px 14px",
-                border:
-                  "1px solid #cbd5e1",
-                borderRadius: "9px",
-                fontSize: "14px",
-              }}
+              className="w-full rounded-lg border border-border-strong bg-surface px-3.5 py-3 text-sm outline-none transition placeholder:text-ink-faint focus:border-primary focus:ring-1 focus:ring-primary"
             />
           </div>
 
           {error && (
-            <div
-              style={{
-                padding: "12px",
-                borderRadius: "9px",
-                background:
-                  "#fef2f2",
-                border:
-                  "1px solid #fecaca",
-                color: "#b91c1c",
-                fontSize: "14px",
-              }}
-            >
+            <div className="animate-fade-in rounded-lg border border-danger-border bg-danger-bg p-3 text-sm text-danger-text">
               {error}
             </div>
           )}
@@ -417,22 +288,7 @@ export default function SignupPage() {
           <button
             type="submit"
             disabled={loading}
-            style={{
-              border: "none",
-              borderRadius: "9px",
-              padding:
-                "13px 16px",
-              background:
-                loading
-                  ? "#94a3b8"
-                  : "#0f172a",
-              color: "#ffffff",
-              fontSize: "14px",
-              fontWeight: 600,
-              cursor: loading
-                ? "not-allowed"
-                : "pointer",
-            }}
+            className="rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-white transition hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading
               ? "Creating workspace..."
@@ -440,23 +296,11 @@ export default function SignupPage() {
           </button>
         </form>
 
-        <div
-          style={{
-            marginTop: "24px",
-            textAlign: "center",
-            fontSize: "14px",
-            color: "#64748b",
-          }}
-        >
+        <div className="mt-6 text-center text-sm text-ink-muted">
           Already have an account?{" "}
           <a
             href="/login"
-            style={{
-              color: "#0f172a",
-              fontWeight: 600,
-              textDecoration:
-                "none",
-            }}
+            className="font-semibold text-ink transition hover:text-primary"
           >
             Sign in
           </a>

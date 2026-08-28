@@ -9,6 +9,8 @@ import {
   useRouter,
 } from "next/navigation";
 
+import { toast } from "sonner";
+
 import {
   saveAuth,
 } from "../../lib/auth";
@@ -91,6 +93,8 @@ export default function LoginPage() {
 
       saveAuth(authData);
 
+      toast.success("Welcome back!");
+
       router.push("/");
     } catch (error) {
       setError(
@@ -104,75 +108,28 @@ export default function LoginPage() {
   }
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "24px",
-        background: "#f8fafc",
-      }}
-    >
-      <div
-        style={{
-          width: "100%",
-          maxWidth: "420px",
-          background: "#ffffff",
-          border: "1px solid #e2e8f0",
-          borderRadius: "16px",
-          padding: "32px",
-          boxShadow:
-            "0 10px 30px rgba(15, 23, 42, 0.08)",
-        }}
-      >
-        <div
-          style={{
-            marginBottom: "28px",
-          }}
-        >
-          <h1
-            style={{
-              margin: 0,
-              fontSize: "28px",
-              fontWeight: 700,
-              color: "#0f172a",
-            }}
-          >
+    <main className="animate-page-in flex min-h-screen items-center justify-center bg-page p-6 text-ink">
+
+      <div className="glass-panel w-full max-w-[420px] rounded-2xl p-8">
+
+        <div className="mb-7">
+          <h1 className="text-[28px] font-bold tracking-tight text-ink">
             Welcome back
           </h1>
 
-          <p
-            style={{
-              marginTop: "8px",
-              marginBottom: 0,
-              color: "#64748b",
-              fontSize: "14px",
-            }}
-          >
-            Sign in to your AI Visibility
-            workspace.
+          <p className="mt-2 text-sm text-ink-muted">
+            Sign in to your AI Visibility workspace.
           </p>
         </div>
 
         <form
           onSubmit={handleSubmit}
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: "18px",
-          }}
+          className="flex flex-col gap-4"
         >
           <div>
             <label
               htmlFor="email"
-              style={{
-                display: "block",
-                marginBottom: "7px",
-                fontSize: "14px",
-                fontWeight: 600,
-                color: "#334155",
-              }}
+              className="mb-1.5 block text-sm font-semibold text-ink-secondary"
             >
               Email
             </label>
@@ -189,29 +146,14 @@ export default function LoginPage() {
               placeholder="you@example.com"
               required
               autoComplete="email"
-              style={{
-                width: "100%",
-                boxSizing: "border-box",
-                padding: "12px 14px",
-                border:
-                  "1px solid #cbd5e1",
-                borderRadius: "9px",
-                fontSize: "14px",
-                outline: "none",
-              }}
+              className="w-full rounded-lg border border-border-strong bg-surface px-3.5 py-3 text-sm outline-none transition placeholder:text-ink-faint focus:border-primary focus:ring-1 focus:ring-primary"
             />
           </div>
 
           <div>
             <label
               htmlFor="password"
-              style={{
-                display: "block",
-                marginBottom: "7px",
-                fontSize: "14px",
-                fontWeight: 600,
-                color: "#334155",
-              }}
+              className="mb-1.5 block text-sm font-semibold text-ink-secondary"
             >
               Password
             </label>
@@ -228,31 +170,12 @@ export default function LoginPage() {
               placeholder="Enter your password"
               required
               autoComplete="current-password"
-              style={{
-                width: "100%",
-                boxSizing: "border-box",
-                padding: "12px 14px",
-                border:
-                  "1px solid #cbd5e1",
-                borderRadius: "9px",
-                fontSize: "14px",
-                outline: "none",
-              }}
+              className="w-full rounded-lg border border-border-strong bg-surface px-3.5 py-3 text-sm outline-none transition placeholder:text-ink-faint focus:border-primary focus:ring-1 focus:ring-primary"
             />
           </div>
 
           {error && (
-            <div
-              style={{
-                padding: "12px",
-                borderRadius: "9px",
-                background: "#fef2f2",
-                border:
-                  "1px solid #fecaca",
-                color: "#b91c1c",
-                fontSize: "14px",
-              }}
-            >
+            <div className="animate-fade-in rounded-lg border border-danger-border bg-danger-bg p-3 text-sm text-danger-text">
               {error}
             </div>
           )}
@@ -260,20 +183,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            style={{
-              border: "none",
-              borderRadius: "9px",
-              padding: "13px 16px",
-              background: loading
-                ? "#94a3b8"
-                : "#0f172a",
-              color: "#ffffff",
-              fontSize: "14px",
-              fontWeight: 600,
-              cursor: loading
-                ? "not-allowed"
-                : "pointer",
-            }}
+            className="rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-white transition hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading
               ? "Signing in..."
@@ -281,22 +191,11 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <div
-          style={{
-            marginTop: "24px",
-            textAlign: "center",
-            fontSize: "14px",
-            color: "#64748b",
-          }}
-        >
-          Don't have an account?{" "}
+        <div className="mt-6 text-center text-sm text-ink-muted">
+          Don&apos;t have an account?{" "}
           <a
             href="/signup"
-            style={{
-              color: "#0f172a",
-              fontWeight: 600,
-              textDecoration: "none",
-            }}
+            className="font-semibold text-ink transition hover:text-primary"
           >
             Create one
           </a>

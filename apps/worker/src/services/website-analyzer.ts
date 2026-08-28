@@ -42,7 +42,7 @@ export interface WebsiteAnalysisResult {
    NORMALIZE URL
 ======================================== */
 
-function normalizeUrl(
+export function normalizeUrl(
   url: string
 ): string {
   const trimmed =
@@ -74,7 +74,7 @@ function normalizeUrl(
    CLEAN TEXT
 ======================================== */
 
-function cleanText(
+export function cleanText(
   text: string
 ): string {
   return text
@@ -87,7 +87,7 @@ function cleanText(
    EXTRACT TAG TEXT
 ======================================== */
 
-function extractTagText(
+export function extractTagText(
   html: string,
   tag: string
 ): string[] {
@@ -238,7 +238,7 @@ function extractLinks(
    EXTRACT IMAGES
 ======================================== */
 
-function extractImages(
+export function extractImages(
   html: string
 ): {
   total: number;
@@ -279,6 +279,36 @@ function extractImages(
     withAlt,
     withoutAlt,
   };
+}
+
+/* ========================================
+   COMPUTE SEO SCORE
+
+   Shared by the regex analyzer and the
+   Firecrawl-backed analyzer so both paths
+   produce comparably-scored results.
+======================================== */
+
+export function computeSeoScore(
+  hasTitle: boolean,
+  hasDescription: boolean,
+  hasH1: boolean
+): number {
+  let score = 0;
+
+  if (hasTitle) {
+    score += 35;
+  }
+
+  if (hasDescription) {
+    score += 30;
+  }
+
+  if (hasH1) {
+    score += 35;
+  }
+
+  return score;
 }
 
 /* ========================================
@@ -453,23 +483,12 @@ export async function analyzeWebsite(
   const hasH1 =
     h1.length > 0;
 
-  /* ========================================
-     SEO SCORE
-  ======================================== */
-
-  let seoScore = 0;
-
-  if (hasTitle) {
-    seoScore += 35;
-  }
-
-  if (hasDescription) {
-    seoScore += 30;
-  }
-
-  if (hasH1) {
-    seoScore += 35;
-  }
+  const seoScore =
+    computeSeoScore(
+      hasTitle,
+      hasDescription,
+      hasH1
+    );
 
   /* ========================================
      RETURN ANALYSIS
