@@ -1,3 +1,7 @@
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL ??
+  "http://localhost:4000";
+
 /* ========================================
    AUTH TYPES
 ======================================== */
@@ -192,7 +196,7 @@ export async function logout(): Promise<boolean> {
   try {
     if (token) {
       await fetch(
-        "http://localhost:4000/api/auth/logout",
+        `${API_BASE_URL}/api/auth/logout`,
         {
           method: "POST",
           headers: {

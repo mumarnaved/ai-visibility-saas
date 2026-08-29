@@ -74,6 +74,7 @@ export async function runOpenRouter(
          * for application identification.
          */
         "HTTP-Referer":
+          process.env.WEB_APP_URL ??
           "http://localhost:3000",
 
         "X-Title":

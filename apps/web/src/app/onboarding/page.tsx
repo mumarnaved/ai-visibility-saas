@@ -9,6 +9,10 @@ import { authFetch } from "@/lib/auth";
 import { setSelectedTenantId } from "@/lib/tenant";
 import DomainVerificationPanel from "@/components/DomainVerificationPanel";
 
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL ??
+  "http://localhost:4000";
+
 type Tenant = {
   id: string;
   slug: string;
@@ -109,7 +113,7 @@ export default function OnboardingPage() {
 
       const tenantResponse =
         await authFetch(
-          "http://localhost:4000/api/tenants",
+          `${API_BASE_URL}/api/tenants`,
           {
             method: "POST",
             body: JSON.stringify({

@@ -19,6 +19,7 @@ import {
 } from "@/components/Skeleton";
 
 const WORKER_API =
+  process.env.NEXT_PUBLIC_API_URL ??
   "http://localhost:4000";
 
 /* ========================================

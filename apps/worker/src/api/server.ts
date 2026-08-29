@@ -105,16 +105,13 @@ import {
 
 import {
   scheduleTenantDeprovisioning,
+  runDueDeprovisioning,
 } from "../database/postgres/tenant-deprovisioning.js";
 
 import {
   createUniqueTenantSlug,
   createUniqueWorkspaceSlug,
 } from "../auth/auth-service.js";
-
-import {
-  startDeprovisioningScheduler,
-} from "../scheduler/deprovisioning-scheduler.js";
 
 import authRouter from "../auth/routes/auth-routes.js";
 
@@ -140,7 +137,7 @@ import {
   handleStripeWebhookEvent,
 } from "../services/stripe-webhook-handler.js";
 
-const app = express();
+const app: express.Express = express();
 
 const PORT = Number(
   process.env.API_PORT ?? 4000
@@ -152,7 +149,9 @@ const PORT = Number(
 
 app.use(
   cors({
-    origin: "http://localhost:3000",
+    origin:
+      process.env.WEB_APP_URL ??
+      "http://localhost:3000",
   })
 );
 
@@ -2542,7 +2541,10 @@ app.get(
   "/api/oauth/google/callback",
   async (req, res) => {
     const redirectBase =
-      "http://localhost:3000/monitoring";
+      `${
+        process.env.WEB_APP_URL ??
+        "http://localhost:3000"
+      }/monitoring`;
 
     try {
       const {
@@ -3091,16 +3093,104 @@ app.post(
 );
 
 /* ========================================
-   START SERVER
+   CRON - DEPROVISION DUE TENANTS
+
+   Replaces the old node-cron in-process
+   scheduler, which can't run inside a
+   serverless function (nothing stays
+   resident between invocations). Triggered
+   once daily by a Vercel Cron Job (see
+   vercel.json) hitting this route instead.
+
+   Vercel automatically attaches
+   `Authorization: Bearer <CRON_SECRET>` to
+   requests it sends here when a CRON_SECRET
+   env var is configured on the project -
+   this checks that header so the endpoint
+   can't be triggered by anyone who just
+   finds the URL. Locally (no CRON_SECRET
+   set), the check is skipped so `pnpm dev`
+   still works untouched.
 ======================================== */
 
-app.listen(
-  PORT,
-  () => {
-    console.log(
-      `Worker API running on http://localhost:${PORT}`
-    );
+app.get(
+  "/api/cron/deprovision",
+  async (req, res) => {
+    const cronSecret =
+      process.env.CRON_SECRET;
 
-    startDeprovisioningScheduler();
+    if (cronSecret) {
+      const authHeader =
+        req.headers.authorization;
+
+      if (
+        authHeader !==
+        `Bearer ${cronSecret}`
+      ) {
+        return res.status(401).json({
+          success: false,
+          error: "Unauthorized.",
+        });
+      }
+    }
+
+    try {
+      const torn =
+        await runDueDeprovisioning();
+
+      if (torn.length > 0) {
+        console.log(
+          `Deprovisioned ${torn.length} tenant(s): ${torn
+            .map(
+              (tenant) =>
+                tenant.tenantId
+            )
+            .join(", ")}`
+        );
+      }
+
+      return res.json({
+        success: true,
+        data: {
+          deprovisionedCount:
+            torn.length,
+        },
+      });
+    } catch (error) {
+      console.error(
+        "Scheduled tenant deprovisioning failed:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Scheduled tenant deprovisioning failed.",
+      });
+    }
   }
 );
+
+/* ========================================
+   START SERVER
+
+   Only listens on a port for local dev -
+   on Vercel, the app is exported and
+   invoked per-request as a serverless
+   function instead (see api/index.ts).
+======================================== */
+
+if (!process.env.VERCEL) {
+  app.listen(
+    PORT,
+    () => {
+      console.log(
+        `Worker API running on http://localhost:${PORT}`
+      );
+    }
+  );
+}
+
+export default app;
