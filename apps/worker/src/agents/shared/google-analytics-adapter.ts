@@ -514,7 +514,7 @@ export class GoogleAnalyticsAdapter
             b.impressions -
             a.impressions
         )
-        .slice(0, 5)
+        .slice(0, 12)
         .map((row) => {
           const query =
             row.keys[0] ?? "";

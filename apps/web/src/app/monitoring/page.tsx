@@ -307,6 +307,11 @@ export default function MonitoringPage() {
   const [viewingReport, setViewingReport] =
     useState(false);
 
+  const [
+    rankingsExpanded,
+    setRankingsExpanded,
+  ] = useState(false);
+
   /* ========================================
      LOAD
   ======================================== */
@@ -1091,9 +1096,16 @@ export default function MonitoringPage() {
 
               {metrics?.rankings &&
               metrics.rankings.keywords.length > 0 ? (
-                <div className="mt-4 space-y-3">
-                  {metrics.rankings.keywords.map(
-                    (item) => {
+                <>
+                  <div className="mt-4 space-y-3">
+                    {(rankingsExpanded
+                      ? metrics.rankings
+                          .keywords
+                      : metrics.rankings.keywords.slice(
+                          0,
+                          6
+                        )
+                    ).map((item) => {
                       const improved =
                         item.previousPosition !==
                           null &&
@@ -1134,9 +1146,31 @@ export default function MonitoringPage() {
                           </span>
                         </div>
                       );
-                    }
+                    })}
+                  </div>
+
+                  {metrics.rankings.keywords
+                    .length > 6 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setRankingsExpanded(
+                          (previous) =>
+                            !previous
+                        )
+                      }
+                      className="mt-3 text-xs font-semibold text-primary hover:text-primary-hover"
+                    >
+                      {rankingsExpanded
+                        ? "Show less"
+                        : `Show more (${
+                            metrics.rankings
+                              .keywords
+                              .length - 6
+                          } more)`}
+                    </button>
                   )}
-                </div>
+                </>
               ) : (
                 <p className="mt-4 text-sm text-ink-muted">
                   No ranking data yet.
