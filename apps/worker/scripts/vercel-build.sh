@@ -42,3 +42,11 @@ cp -r \
   packages/agent-contracts/dist \
   packages/agent-contracts/package.json \
   apps/worker/node_modules/agent-contracts/
+
+# Vercel (Framework Preset "Other") always looks for a
+# public/ output directory after the build, even for a
+# functions-only project with no static assets - nothing
+# ever serves from it (vercel.json's rewrite sends every
+# request to the API function instead), it just needs to
+# exist so Vercel's build-completion check doesn't fail.
+mkdir -p apps/worker/public
