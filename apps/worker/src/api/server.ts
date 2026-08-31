@@ -140,7 +140,9 @@ import {
 const app: express.Express = express();
 
 const PORT = Number(
-  process.env.API_PORT ?? 4000
+  process.env.PORT ??
+    process.env.API_PORT ??
+    4000
 );
 
 /* ========================================
