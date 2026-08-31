@@ -1097,7 +1097,13 @@ export default function MonitoringPage() {
               {metrics?.rankings &&
               metrics.rankings.keywords.length > 0 ? (
                 <>
-                  <div className="mt-4 space-y-3">
+                  <div
+                    className={`mt-4 space-y-3 ${
+                      rankingsExpanded
+                        ? "max-h-64 overflow-y-auto pr-1"
+                        : ""
+                    }`}
+                  >
                     {(rankingsExpanded
                       ? metrics.rankings
                           .keywords
