@@ -14,6 +14,15 @@ export interface WebsiteAnalysisResult {
     total: number;
     internal: number;
     external: number;
+
+    /*
+     * Deduplicated, absolute internal
+     * link URLs - not just the count -
+     * so callers (the technical audit's
+     * broken-link check) have something
+     * to actually check.
+     */
+    internalUrls: string[];
   };
 
   images: {
@@ -175,6 +184,7 @@ function extractLinks(
   total: number;
   internal: number;
   external: number;
+  internalUrls: string[];
 } {
   const regex =
     /<a\b[^>]*href=["']([^"']+)["'][^>]*>/gi;
@@ -185,6 +195,9 @@ function extractLinks(
   let total = 0;
   let internal = 0;
   let external = 0;
+
+  const internalUrls =
+    new Set<string>();
 
   let match:
     RegExpExecArray | null;
@@ -219,6 +232,12 @@ function extractLinks(
         base.hostname
       ) {
         internal++;
+
+        linkUrl.hash = "";
+
+        internalUrls.add(
+          linkUrl.toString()
+        );
       } else {
         external++;
       }
@@ -231,6 +250,9 @@ function extractLinks(
     total,
     internal,
     external,
+    internalUrls: [
+      ...internalUrls,
+    ],
   };
 }
 

@@ -29,11 +29,15 @@ function categorizeLinks(
   total: number;
   internal: number;
   external: number;
+  internalUrls: string[];
 } {
   const base = new URL(baseUrl);
 
   let internal = 0;
   let external = 0;
+
+  const internalUrls =
+    new Set<string>();
 
   for (const link of links) {
     try {
@@ -47,6 +51,12 @@ function categorizeLinks(
         base.hostname
       ) {
         internal++;
+
+        linkUrl.hash = "";
+
+        internalUrls.add(
+          linkUrl.toString()
+        );
       } else {
         external++;
       }
@@ -59,6 +69,9 @@ function categorizeLinks(
     total: links.length,
     internal,
     external,
+    internalUrls: [
+      ...internalUrls,
+    ],
   };
 }
 

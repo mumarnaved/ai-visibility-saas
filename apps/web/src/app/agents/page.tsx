@@ -49,11 +49,35 @@ type AuditReport = {
   };
 };
 
+type TechnicalAuditFinding = {
+  category: string;
+  severity:
+    | "critical"
+    | "high"
+    | "medium"
+    | "low"
+    | "info";
+  title: string;
+  description: string;
+  recommendation: string;
+};
+
 type Stage1AuditResult = {
   websiteUrl: string;
   brandName: string;
   auditReport: AuditReport;
   completedAt: string;
+
+  /*
+   * The worker already sends the raw
+   * per-agent results alongside the rolled-
+   * up auditReport - only the technical
+   * audit's findings are modeled here since
+   * that's the only one currently rendered.
+   */
+  technicalAudit?: {
+    findings?: TechnicalAuditFinding[];
+  } | null;
 };
 
 type Stage1AuditResponse = {
@@ -782,6 +806,85 @@ export default function AgentsPage() {
 
                 </div>
               )}
+
+              {/* TECHNICAL FINDINGS */}
+
+              {result.technicalAudit
+                ?.findings &&
+                result.technicalAudit
+                  .findings.length >
+                  0 && (
+                  <div className="mt-6">
+
+                    <div className="text-xs font-semibold uppercase tracking-wide text-ink-muted">
+                      Technical findings
+                    </div>
+
+                    <div className="animate-stagger mt-3 space-y-3">
+                      {result.technicalAudit.findings.map(
+                        (
+                          finding,
+                          index
+                        ) => (
+                          <div
+                            key={index}
+                            className="rounded-lg border border-border bg-muted p-4"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <span className="rounded-full bg-border px-2 py-0.5 text-[10px] font-semibold uppercase text-ink-secondary">
+                                  {
+                                    finding.category
+                                  }
+                                </span>
+
+                                <span
+                                  className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${
+                                    finding.severity ===
+                                      "critical" ||
+                                    finding.severity ===
+                                      "high"
+                                      ? "bg-danger-bg text-danger-text"
+                                      : finding.severity ===
+                                        "medium"
+                                      ? "bg-warning-bg text-warning-text"
+                                      : "bg-info-bg text-info-text"
+                                  }`}
+                                >
+                                  {
+                                    finding.severity
+                                  }
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="mt-2 text-sm font-semibold text-ink">
+                              {
+                                finding.title
+                              }
+                            </div>
+
+                            <p className="mt-1 whitespace-pre-line text-xs leading-5 text-ink-muted">
+                              {
+                                finding.description
+                              }
+                            </p>
+
+                            <p className="mt-2 text-xs leading-5 text-ink-secondary">
+                              <span className="font-semibold">
+                                Fix:
+                              </span>{" "}
+                              {
+                                finding.recommendation
+                              }
+                            </p>
+                          </div>
+                        )
+                      )}
+                    </div>
+
+                  </div>
+                )}
 
             </div>
 

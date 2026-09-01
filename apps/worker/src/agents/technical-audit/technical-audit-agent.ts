@@ -20,6 +20,10 @@ import {
 } from "../../services/firecrawl-website-analyzer.js";
 
 import {
+  checkBrokenLinks,
+} from "../../services/broken-link-checker.js";
+
+import {
   saveTechnicalAudit,
 } from "../../database/postgres/technical-audit/technical-audit-repository.js";
 
@@ -157,6 +161,28 @@ export class TechnicalAuditAgent
 
       const sitemapAvailable =
         sitemapResponse.ok;
+
+      /*
+       * Broken internal links (404, 500,
+       * or a connection failure/timeout).
+       * Scoped to internal links only and
+       * bounded (25 links, 5 at a time, 5s
+       * timeout each) - see
+       * broken-link-checker.ts.
+       */
+      const brokenLinkResults =
+        analysis.links.internalUrls
+          .length > 0
+          ? await checkBrokenLinks(
+              analysis.links
+                .internalUrls
+            )
+          : [];
+
+      const brokenLinks =
+        brokenLinkResults.filter(
+          (result) => result.broken
+        );
 
       const findings:
         TechnicalAuditFinding[] = [];
@@ -368,6 +394,44 @@ export class TechnicalAuditAgent
             "The expected /sitemap.xml endpoint was not available.",
           recommendation:
             "Publish an XML sitemap and submit it to relevant search platforms.",
+        });
+      }
+
+      /*
+       * Broken links
+       */
+      if (
+        brokenLinks.length > 0
+      ) {
+        const shown =
+          brokenLinks.slice(0, 10);
+
+        const remainder =
+          brokenLinks.length -
+          shown.length;
+
+        const listText =
+          shown
+            .map(
+              (link) =>
+                `${link.url} (${link.reason})`
+            )
+            .join("\n") +
+          (remainder > 0
+            ? `\n+${remainder} more`
+            : "");
+
+        findings.push({
+          category: "broken-links",
+          severity: "high",
+          title: `${brokenLinks.length} broken internal link${
+            brokenLinks.length === 1
+              ? ""
+              : "s"
+          } detected`,
+          description: listText,
+          recommendation:
+            "Fix, redirect, or remove these links so visitors and crawlers don't hit dead pages.",
         });
       }
 
