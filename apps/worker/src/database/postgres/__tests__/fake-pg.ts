@@ -64,10 +64,15 @@ export interface TenantFixture {
   name: string;
   schema_name: string;
   status: string;
+  manifest?: unknown;
 }
 
 export interface FakePgOptions {
   tenants?: TenantFixture[];
+  /* Make manifest UPDATEs throw: all of them, or only for these tenant ids. */
+  failManifestWrites?: boolean | string[];
+  /* Simulate platform migration 009 not being applied yet. */
+  noManifestColumn?: boolean;
   /* Throw when a migration file runs against this schema. */
   failSchemas?: string[];
 }
@@ -89,12 +94,31 @@ export class FakePg implements MigrationPool {
 
   private tenants: TenantFixture[];
   private failSchemas: Set<string>;
+  private failManifestWrites: boolean | string[];
+  private noManifestColumn: boolean;
 
   constructor(options: FakePgOptions = {}) {
     this.tenants = options.tenants ?? [];
     this.failSchemas = new Set(
       options.failSchemas ?? []
     );
+    this.failManifestWrites =
+      options.failManifestWrites ?? false;
+    this.noManifestColumn =
+      options.noManifestColumn ?? false;
+  }
+
+  addTenant(tenant: TenantFixture): void {
+    this.tenants.push({ ...tenant });
+  }
+
+  /* Deep copy of the platform.tenants rows. */
+  tenantRows(): TenantFixture[] {
+    return structuredClone(this.tenants);
+  }
+
+  tenant(id: string): TenantFixture | undefined {
+    return this.tenants.find((t) => t.id === id);
   }
 
   /* Statements that would change a real database. */
@@ -347,8 +371,79 @@ export class FakePg implements MigrationPool {
       return [];
     }
 
+    if (
+      /^SELECT manifest FROM platform\.tenants WHERE id/i.test(
+        text
+      )
+    ) {
+      const row = this.tenant(String(params[0]));
+
+      return row
+        ? [{ manifest: row.manifest ?? null }]
+        : [];
+    }
+
+    if (
+      /^UPDATE platform\.tenants\s+SET manifest = /i.test(
+        text
+      )
+    ) {
+      if (
+        this.failManifestWrites === true ||
+        (Array.isArray(this.failManifestWrites) &&
+          this.failManifestWrites.includes(
+            String(params[0])
+          ))
+      ) {
+        throw new Error("simulated manifest write failure");
+      }
+
+      const row = this.tenant(String(params[0]));
+
+      /* Only honoured if the statement itself carries the guard. */
+      const guarded = /AND manifest IS NULL/i.test(text);
+
+      if (
+        !row ||
+        (guarded &&
+          row.manifest !== null &&
+          row.manifest !== undefined)
+      ) {
+        return [];
+      }
+
+      row.manifest = JSON.parse(String(params[1]));
+      return [{ id: row.id }];
+    }
+
+    const setStatus = text.match(
+      /^UPDATE platform\.tenants\s+SET\s+status = '(\w+)'/i
+    );
+
+    if (setStatus) {
+      const row = this.tenant(String(params[0]));
+
+      if (row) {
+        row.status = setStatus[1];
+      }
+
+      return [];
+    }
+
     if (/FROM platform\.tenants/i.test(text)) {
-      return this.tenants.map((t) => ({ ...t }));
+      if (
+        this.noManifestColumn &&
+        /manifest/.test(text)
+      ) {
+        throw new Error(
+          'column "manifest" does not exist'
+        );
+      }
+
+      return this.tenants.map((t) => ({
+        ...t,
+        manifest: t.manifest ?? null,
+      }));
     }
 
     /* Anything else is a migration file. */

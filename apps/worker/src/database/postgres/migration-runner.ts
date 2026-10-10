@@ -272,6 +272,10 @@ export const BASELINE_MARKERS: Record<
       "idx_billing_accounts_stripe_customer_id",
       "idx_billing_accounts_stripe_subscription_id"
     ),
+    "009_add_tenant_manifest": columns(
+      "tenants",
+      "manifest"
+    ),
   },
 };
 
