@@ -1,49 +1,50 @@
 import "dotenv/config";
 
-import { readdir, readFile } from "node:fs/promises";
-import { resolve } from "node:path";
-
 import { pool } from "./connection.js";
+import {
+  migratePlatform,
+  parseDryRunFlag,
+} from "./migration-commands.js";
+import {
+  loadMigrationFiles,
+  platformMigrationsDirectory,
+} from "./migration-runner.js";
 
-const migrationsPath = resolve(
-  process.cwd(),
-  "..",
-  "..",
-  "database",
-  "platform",
-  "migrations"
-);
+/*
+ * Applies unapplied platform migrations,
+ * tracked in platform.schema_migrations.
+ *
+ *   npx tsx src/database/postgres/run-platform-migration.ts [--dry-run]
+ */
 
 try {
-  const files = (await readdir(migrationsPath))
-    .filter((file) => file.endsWith(".sql"))
-    .sort();
+  const dryRun = parseDryRunFlag(
+    process.argv.slice(2)
+  );
 
-  if (files.length === 0) {
-    throw new Error("No platform migrations found.");
-  }
+  const files = await loadMigrationFiles(
+    platformMigrationsDirectory()
+  );
 
-  for (const file of files) {
-    const filePath = resolve(migrationsPath, file);
+  await migratePlatform(pool, {
+    files,
+    dryRun,
+    log: (line) => console.log(line),
+  });
 
-    console.log(`Running platform migration: ${file}`);
-
-    const sql = await readFile(filePath, "utf8");
-
-    await pool.query(sql);
-
-    console.log(`Platform migration ${file}: OK`);
-  }
-
-  console.log("All platform migrations completed successfully.");
+  console.log(
+    dryRun
+      ? "Dry run complete (nothing was changed)."
+      : "All platform migrations completed successfully."
+  );
 } catch (error) {
   console.error("Platform migrations FAILED");
 
-  if (error instanceof Error) {
-    console.error(error.message);
-  } else {
-    console.error(error);
-  }
+  console.error(
+    error instanceof Error
+      ? error.message
+      : error
+  );
 
   process.exitCode = 1;
 } finally {
