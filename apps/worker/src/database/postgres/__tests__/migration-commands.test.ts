@@ -271,6 +271,20 @@ describe("parseDryRunFlag", () => {
       /Unknown argument/
     );
   });
+
+  it("ignores the lone -- that pnpm forwards, still rejecting other flags", () => {
+    assert.equal(parseDryRunFlag(["--", "--dry-run"]), true);
+    assert.equal(parseDryRunFlag(["--"]), false);
+    assert.equal(parseDryRunFlag(["--dry-run", "--"]), true);
+    assert.throws(
+      () => parseDryRunFlag(["--", "--dryrun"]),
+      /Unknown argument/
+    );
+    assert.throws(
+      () => parseDryRunFlag(["--", "--force"]),
+      /Unknown argument/
+    );
+  });
 });
 
 describe("migratePlatform", () => {

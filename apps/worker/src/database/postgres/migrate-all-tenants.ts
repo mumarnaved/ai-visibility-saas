@@ -20,8 +20,10 @@ import {
    one tenant at a time, continuing past
    failures.
 
-     pnpm --filter worker migrate:tenants -- --dry-run
+     pnpm --filter worker migrate:tenants --dry-run
      pnpm --filter worker migrate:tenants
+
+   (a "--" before --dry-run is also accepted)
 
    --dry-run prints, per tenant, which versions
    would be baselined and which would run, and

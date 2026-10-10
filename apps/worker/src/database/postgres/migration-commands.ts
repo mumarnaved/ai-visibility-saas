@@ -228,12 +228,16 @@ export async function migratePlatform(
 /*
  * Only --dry-run is recognised. Anything else
  * is rejected so a typo (--dryrun) cannot turn
- * a rehearsal into a real run.
+ * a rehearsal into a real run. A lone "--" is
+ * ignored: pnpm forwards it to the script when
+ * run as `pnpm ... migrate:tenants -- --dry-run`.
  */
 export function parseDryRunFlag(
   argv: string[]
 ): boolean {
-  const unknown = argv.filter(
+  const args = argv.filter((arg) => arg !== "--");
+
+  const unknown = args.filter(
     (arg) => arg !== "--dry-run"
   );
 
@@ -243,5 +247,5 @@ export function parseDryRunFlag(
     );
   }
 
-  return argv.includes("--dry-run");
+  return args.includes("--dry-run");
 }
