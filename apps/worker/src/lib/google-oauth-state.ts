@@ -1,4 +1,8 @@
-import { createHmac, randomBytes } from "node:crypto";
+import {
+  createHmac,
+  randomBytes,
+  timingSafeEqual,
+} from "node:crypto";
 
 /* ========================================
    GOOGLE OAUTH STATE
@@ -7,9 +11,9 @@ import { createHmac, randomBytes } from "node:crypto";
    top-level browser navigation - it carries
    none of our session headers, so the
    callback route can't use requireAuth. This
-   signs {tenantId, nonce, issuedAt} with the
+   signs {tenantId, userId, nonce, issuedAt} with the
    existing vault master key so the callback
-   can verify which tenant started the flow
+   can verify which tenant and which user started the flow
    and reject anything forged or stale,
    without needing a new "pending OAuth"
    table or session state.
@@ -19,6 +23,7 @@ const STATE_TTL_MS = 10 * 60 * 1000;
 
 interface StatePayload {
   tenantId: string;
+  userId: string;
   nonce: string;
   issuedAt: number;
 }
@@ -51,10 +56,12 @@ function sign(payload: string): string {
 ======================================== */
 
 export function buildOAuthState(
-  tenantId: string
+  tenantId: string,
+  userId: string
 ): string {
   const payload: StatePayload = {
     tenantId,
+    userId,
     nonce:
       randomBytes(16).toString(
         "hex"
@@ -80,7 +87,7 @@ export function buildOAuthState(
 
 export function verifyOAuthState(
   state: string
-): { tenantId: string } | null {
+): { tenantId: string; userId: string } | null {
   const [
     encodedPayload,
     signature,
@@ -94,8 +101,14 @@ export function verifyOAuthState(
     encodedPayload
   );
 
+  const given = Buffer.from(signature);
+  const expected = Buffer.from(
+    expectedSignature
+  );
+
   if (
-    signature !== expectedSignature
+    given.length !== expected.length ||
+    !timingSafeEqual(given, expected)
   ) {
     return null;
   }
@@ -116,6 +129,8 @@ export function verifyOAuthState(
   if (
     typeof payload.tenantId !==
       "string" ||
+    typeof payload.userId !==
+      "string" ||
     typeof payload.issuedAt !==
       "number"
   ) {
@@ -129,5 +144,8 @@ export function verifyOAuthState(
     return null;
   }
 
-  return { tenantId: payload.tenantId };
+  return {
+    tenantId: payload.tenantId,
+    userId: payload.userId,
+  };
 }

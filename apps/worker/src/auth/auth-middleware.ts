@@ -27,7 +27,7 @@ export interface AuthenticatedRequest
    GET SESSION TOKEN
 ======================================== */
 
-function getSessionToken(
+export function getSessionToken(
   req: Request
 ): string | null {
   const authorization =

@@ -7,6 +7,7 @@ import { pool } from "../database/postgres/connection.js";
 import { provisionTenant } from "../database/postgres/tenant-provisioning.js";
 
 import {
+  getSessionToken,
   requireAuth,
   type AuthenticatedRequest,
 } from "../auth/auth-middleware.js";
@@ -69,6 +70,10 @@ import {
 } from "../lib/google-oauth-client.js";
 
 import {
+  getAuthenticatedUser,
+} from "../auth/session.js";
+
+import {
   buildOAuthState,
   verifyOAuthState,
 } from "../lib/google-oauth-state.js";
@@ -112,6 +117,10 @@ import {
   createUniqueTenantSlug,
   createUniqueWorkspaceSlug,
 } from "../auth/auth-service.js";
+
+import {
+  userHasTenantAccess,
+} from "../lib/tenant-access.js";
 
 import authRouter from "../auth/routes/auth-routes.js";
 
@@ -279,9 +288,26 @@ app.use(
   requireAuth
 );
 
+/*
+ * Ownership check for every
+ * /api/tenants/:tenantId/* route. Runs after
+ * requireAuth (above) and before any route
+ * handler, including the route-level
+ * requirePaidFeatureAccess.
+ */
+app.use(
+  "/api/tenants/:tenantId",
+  requireTenantAccess
+);
+
 app.use(
   "/api/citation-audit",
   requireAuth
+);
+
+app.use(
+  "/api/citation-audit",
+  requireTenantAccessFromQuery
 );
 
 app.use(
@@ -292,6 +318,83 @@ app.use(
 /* ========================================
    HELPERS
 ======================================== */
+
+/* ========================================
+   REQUIRE TENANT ACCESS
+
+   requireAuth only proves who the caller is.
+   This proves the caller belongs to the
+   tenant named in the URL, via
+   platform.workspace_members. A non-member
+   gets 404 (not 403) so a tenant's existence
+   is never revealed to other accounts.
+
+   "latest" is a static route under the same
+   prefix (GET /api/tenants/latest) that
+   resolves the caller's own tenant, so it is
+   not a tenant ID and skips the check.
+======================================== */
+
+export async function requireTenantAccess(
+  req: AuthenticatedRequest,
+  res: express.Response,
+  next: express.NextFunction
+): Promise<void> {
+  try {
+    const tenantId =
+      typeof req.params.tenantId ===
+      "string"
+        ? req.params.tenantId.trim()
+        : "";
+
+    if (tenantId === "latest") {
+      next();
+
+      return;
+    }
+
+    const userId =
+      req.auth?.user.id;
+
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        error:
+          "Authentication required.",
+      });
+
+      return;
+    }
+
+    const hasAccess =
+      await userHasTenantAccess(
+        userId,
+        tenantId
+      );
+
+    if (!hasAccess) {
+      res.status(404).json({
+        success: false,
+        error: "Tenant not found.",
+      });
+
+      return;
+    }
+
+    next();
+  } catch (error) {
+    console.error(
+      "Tenant access check failed:",
+      error
+    );
+
+    res.status(500).json({
+      success: false,
+      error:
+        "Failed to verify tenant access.",
+    });
+  }
+}
 
 /* ========================================
    HEALTH
@@ -323,6 +426,75 @@ app.get(
     }
   }
 );
+
+/* ========================================
+   REQUIRE TENANT ACCESS (QUERY)
+
+   Same ownership check for routes that take
+   the tenant as ?tenantId= instead of a path
+   param (/api/citation-audit/*). A missing,
+   repeated (array) or blank tenantId is 400;
+   a non-member gets the same 404 as above.
+======================================== */
+
+export async function requireTenantAccessFromQuery(
+  req: AuthenticatedRequest,
+  res: express.Response,
+  next: express.NextFunction
+): Promise<void> {
+  try {
+    const raw = req.query.tenantId;
+
+    const tenantId =
+      typeof raw === "string"
+        ? raw.trim()
+        : "";
+
+    if (!tenantId) {
+      res.status(400).json({
+        success: false,
+        error: "tenantId is required.",
+      });
+
+      return;
+    }
+
+    const userId =
+      req.auth?.user.id;
+
+    if (
+      !userId ||
+      !(await userHasTenantAccess(
+        userId,
+        tenantId
+      ))
+    ) {
+      res
+        .status(userId ? 404 : 401)
+        .json({
+          success: false,
+          error: userId
+            ? "Tenant not found."
+            : "Authentication required.",
+        });
+
+      return;
+    }
+
+    next();
+  } catch (error) {
+    console.error(
+      "Tenant access check failed:",
+      error
+    );
+
+    res.status(500).json({
+      success: false,
+      error:
+        "Failed to verify tenant access.",
+    });
+  }
+}
 
 /* ========================================
    LIST TENANTS
@@ -2471,10 +2643,13 @@ app.get(
 
 app.get(
   "/api/tenants/:tenantId/oauth/google/start",
-  async (req, res) => {
+  async (
+    req: AuthenticatedRequest,
+    res
+  ) => {
     try {
       const tenantId =
-        req.params.tenantId?.trim();
+        String(req.params.tenantId ?? "").trim();
 
       if (!tenantId) {
         return res.status(400).json({
@@ -2497,8 +2672,22 @@ app.get(
         });
       }
 
+      const userId =
+        req.auth?.user.id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          error:
+            "Authentication required.",
+        });
+      }
+
       const state =
-        buildOAuthState(tenantId);
+        buildOAuthState(
+          tenantId,
+          userId
+        );
 
       const authUrl =
         buildGoogleAuthUrl(state);
@@ -2584,8 +2773,47 @@ app.get(
         );
       }
 
-      const { tenantId } =
+      const { tenantId, userId } =
         verifiedState;
+
+      /*
+       * The callback is a bare browser redirect
+       * from Google, so it normally carries no
+       * session header. If one IS present it
+       * must be the user who started the flow.
+       * Either way, that user must still belong
+       * to the tenant (membership may have been
+       * revoked since the state was issued).
+       */
+      const sessionToken =
+        getSessionToken(req);
+
+      if (sessionToken) {
+        const sessionUser =
+          await getAuthenticatedUser(
+            sessionToken
+          );
+
+        if (
+          !sessionUser ||
+          sessionUser.id !== userId
+        ) {
+          return res.redirect(
+            `${redirectBase}?google=error&reason=user_mismatch`
+          );
+        }
+      }
+
+      if (
+        !(await userHasTenantAccess(
+          userId,
+          tenantId
+        ))
+      ) {
+        return res.redirect(
+          `${redirectBase}?google=error&reason=access_denied`
+        );
+      }
 
       const tenant =
         await getTenantById(
