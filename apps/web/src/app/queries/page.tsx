@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { authFetch } from "../../lib/auth";
+import { authFetchJob } from "../../lib/jobs";
 import {
   loadActiveTenant,
   type TenantSummary,
@@ -249,7 +250,7 @@ export default function QueriesPage() {
     try {
       setAdding(true);
 
-      const response = await authFetch(
+      const response = await authFetchJob(
         `${WORKER_API}/api/tenants/${tenant.id}/stage1-audit`,
         {
           method: "POST",

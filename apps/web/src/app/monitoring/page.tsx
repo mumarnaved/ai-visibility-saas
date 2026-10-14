@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { authFetch } from "@/lib/auth";
+import { authFetchJob } from "@/lib/jobs";
 import {
   loadActiveTenant,
   type TenantSummary,
@@ -584,7 +585,7 @@ export default function MonitoringPage() {
     setMonitoring(true);
 
     try {
-      const response = await authFetch(
+      const response = await authFetchJob(
         `${WORKER_API}/api/tenants/${tenant.id}/stage4-monitor`,
         { method: "POST" }
       );
@@ -628,7 +629,7 @@ export default function MonitoringPage() {
     setGenerating(true);
 
     try {
-      const response = await authFetch(
+      const response = await authFetchJob(
         `${WORKER_API}/api/tenants/${tenant.id}/stage4-report`,
         { method: "POST" }
       );

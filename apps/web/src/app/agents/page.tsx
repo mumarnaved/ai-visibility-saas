@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { authFetch } from "@/lib/auth";
+import { authFetchJob } from "@/lib/jobs";
 import {
   loadActiveTenant,
   type TenantSummary,
@@ -220,7 +221,7 @@ export default function AgentsPage() {
       setResult(null);
 
       const response =
-        await authFetch(
+        await authFetchJob(
           `${WORKER_API}/api/tenants/${tenant.id}/stage1-audit`,
           {
             method: "POST",
