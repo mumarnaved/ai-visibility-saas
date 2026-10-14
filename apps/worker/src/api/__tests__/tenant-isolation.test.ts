@@ -111,6 +111,7 @@ const TENANT_ROUTES: Array<[string, string]> = [
   ["POST", "/verify-domain"],
   ["POST", "/quick-verify-domain"],
   ["POST", "/cancel"],
+  ["GET", "/jobs/some-job"],
 ];
 
 /* Routes under /api/citation-audit, which take ?tenantId=. */
@@ -197,6 +198,7 @@ describe("route guard (static)", () => {
     const tested = new Set(
       TENANT_ROUTES.map(([, path]) =>
         path.replace("some-plan", ":planId").replace("some-task", ":taskId")
+        .replace("some-job", ":jobId")
       )
     );
 

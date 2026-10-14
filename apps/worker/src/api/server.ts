@@ -1,5 +1,7 @@
 import "dotenv/config";
 
+import { createHash, timingSafeEqual } from "node:crypto";
+
 import express from "express";
 import cors from "cors";
 
@@ -13,10 +15,6 @@ import {
 } from "../auth/auth-middleware.js";
 
 import {
-  Stage1AuditPipeline,
-} from "../agents/stage-1-audit-pipeline.js";
-
-import {
   getLatestCitationVisibilityAudit,
   deriveCitationAuditMetrics,
   deriveQueryRecords,
@@ -24,34 +22,13 @@ import {
 } from "../database/postgres/citation-visibility/citation-visibility-audit-repository.js";
 
 import {
-  saveContentPlan,
   getLatestContentPlan,
   approveContentPlan,
 } from "../database/postgres/content-plan/content-plan-repository.js";
 
 import {
-  ContentPlanAgent,
-} from "../agents/content-plan/index.js";
-
-import {
-  ContentProductionAgent,
-} from "../agents/content-production/index.js";
-
-import {
-  TechnicalFixAgent,
-} from "../agents/technical-fix/index.js";
-
-import {
   PublishingAgent,
 } from "../agents/publishing/index.js";
-
-import {
-  MonitoringAgent,
-} from "../agents/monitoring/index.js";
-
-import {
-  ReportGenerationAgent,
-} from "../agents/report-generation/index.js";
 
 import {
   getLatestMonitoringSnapshot,
@@ -147,6 +124,12 @@ import {
 } from "../services/stripe-webhook-handler.js";
 
 import { buildCorsOptions } from "./cors-config.js";
+
+import { jobQueue } from "../jobs/job-queue-instance.js";
+import { jobHandlers } from "../jobs/job-handlers.js";
+import { runJobs } from "../jobs/job-runner.js";
+import { jobKick } from "../jobs/job-kick.js";
+import { isJobId, type JobRow } from "../jobs/job-queue.js";
 
 const app: express.Express = express();
 
@@ -1327,6 +1310,140 @@ app.get(
 );
 
 /* ========================================
+   BACKGROUND JOBS
+
+   The Stage 1-4 routes validate the request,
+   enqueue a job and answer 202 with its id. The
+   work runs in POST /api/jobs/run (CRON_SECRET
+   protected, called right after enqueue and every
+   minute by pg_cron). The client polls
+   GET /api/tenants/:tenantId/jobs/:jobId.
+======================================== */
+
+function respondJobAccepted(
+  res: express.Response,
+  operation: string,
+  enqueued: { id: string; deduplicated: boolean }
+) {
+  jobKick.run();
+
+  return res.status(202).json({
+    success: true,
+    data: {
+      jobId: enqueued.id,
+      status: "queued",
+      deduplicated: enqueued.deduplicated,
+    },
+    metadata: { operation },
+  });
+}
+
+function serializeJob(job: JobRow) {
+  return {
+    id: job.id,
+    type: job.type,
+    status: job.status,
+    attempts: job.attempts,
+    maxAttempts: job.max_attempts,
+    result: job.status === "succeeded" ? job.result : null,
+    error: job.status === "failed" ? job.error : null,
+    lastError: job.status === "queued" ? job.error : null,
+    createdAt: job.created_at,
+    startedAt: job.started_at,
+    finishedAt: job.finished_at,
+  };
+}
+
+const sha256 = (value: string) =>
+  createHash("sha256").update(value).digest();
+
+/*
+ * Unlike the deprovision cron (which skips the check
+ * when no secret is set, for local dev), this endpoint
+ * runs paid LLM work, so it refuses to run at all
+ * without CRON_SECRET.
+ */
+app.post("/api/jobs/run", async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+
+  if (!secret) {
+    return res.status(503).json({
+      success: false,
+      error: "Job runner is not configured.",
+    });
+  }
+
+  const header = req.headers.authorization ?? "";
+
+  if (
+    !timingSafeEqual(sha256(header), sha256(`Bearer ${secret}`))
+  ) {
+    return res.status(401).json({
+      success: false,
+      error: "Unauthorized.",
+    });
+  }
+
+  try {
+    const summary = await runJobs(jobQueue, jobHandlers, {
+      log: (line) => console.log(line),
+    });
+
+    return res.json({ success: true, data: summary });
+  } catch (error) {
+    console.error("Job run failed:", error);
+
+    return res.status(500).json({
+      success: false,
+      error: "Job run failed.",
+    });
+  }
+});
+
+/* ========================================
+   GET JOB STATUS
+
+   Under the requireTenantAccess mount, and the
+   lookup is scoped by tenant_id too, so a job id
+   from another tenant is just "not found".
+======================================== */
+
+app.get(
+  "/api/tenants/:tenantId/jobs/:jobId",
+  async (req, res) => {
+    try {
+      const tenantId = req.params.tenantId?.trim();
+      const jobId = req.params.jobId;
+
+      if (!tenantId || !isJobId(jobId)) {
+        return res.status(404).json({
+          success: false,
+          error: "Job not found.",
+        });
+      }
+
+      const job = await jobQueue.getJobForTenant(tenantId, jobId);
+
+      if (!job) {
+        return res.status(404).json({
+          success: false,
+          error: "Job not found.",
+        });
+      }
+
+      return res.json({ success: true, data: serializeJob(job) });
+    } catch (error) {
+      console.error("Failed to load job:", error);
+
+      return res.status(500).json({
+        success: false,
+        error: "Failed to load job.",
+      });
+    }
+  }
+);
+
+/* ========================================
    RUN STAGE 1 AUDIT
 ======================================== */
 
@@ -1439,42 +1556,22 @@ app.post(
             );
 
       /*
-       * storagePrefix / credentialNamespace /
-       * vectorNamespace are placeholders until
-       * Stage 0's storage bucket, credential
-       * vault, and vector namespace pieces are
-       * actually built (flagged as missing in
-       * the audit). They're deterministic so the
-       * same tenant always gets the same values.
+       * The audit itself runs as a background job
+       * (see jobs/job-handlers.ts); everything that
+       * can be rejected cheaply is checked above.
        */
-      const tenantContext = {
-        tenantId: tenantId.trim(),
-        schema: schemaName,
-        storagePrefix: `tenant-${tenantId.trim()}`,
-        credentialNamespace: `credentials/tenant-${tenantId.trim()}`,
-        vectorNamespace: `vector-tenant-${tenantId.trim()}`,
-      };
-
-      const pipeline =
-        new Stage1AuditPipeline();
-
-      const result =
-        await pipeline.execute({
-          tenantContext,
+      const enqueued = await jobQueue.enqueueOnce(
+        tenantId.trim(),
+        "stage1-audit",
+        {
           websiteUrl: websiteUrl.trim(),
           brandName: resolvedBrandName,
           queries,
-          competitors:
-            competitorList,
-        });
+          competitors: competitorList,
+        }
+      );
 
-      return res.status(201).json({
-        success: true,
-        data: result,
-        metadata: {
-          operation: "stage1-audit",
-        },
-      });
+      return respondJobAccepted(res, "stage1-audit", enqueued);
     } catch (error) {
       console.error(
         "Stage 1 audit failed:",
@@ -1548,72 +1645,12 @@ app.post(
         });
       }
 
-      const schemaName =
-        schemaResult.rows[0]
-          .schema_name;
+      const enqueued = await jobQueue.enqueueOnce(
+        tenantId.trim(),
+        "stage2-plan"
+      );
 
-      const tenantContext = {
-        tenantId: tenantId.trim(),
-        schema: schemaName,
-        storagePrefix: `tenant-${tenantId.trim()}`,
-        credentialNamespace: `credentials/tenant-${tenantId.trim()}`,
-        vectorNamespace: `vector-tenant-${tenantId.trim()}`,
-      };
-
-      const agent = new ContentPlanAgent();
-
-      const agentOutput =
-        await agent.execute({
-          tenantContext,
-          payload: {
-            tenantId: tenantId.trim(),
-          },
-        });
-
-      if (
-        !agentOutput.success ||
-        !agentOutput.data
-      ) {
-        return res.status(422).json({
-          success: false,
-          error:
-            agentOutput.error ||
-            "Content plan generation failed.",
-        });
-      }
-
-      const generated = agentOutput.data;
-
-      const saved =
-        await saveContentPlan(
-          schemaName,
-          {
-            auditReportId:
-              generated.auditReportId,
-
-            summary: generated.summary,
-
-            contentGaps:
-              generated.contentGapMap,
-
-            entityPlan:
-              generated.entitySchemaPlan,
-
-            technicalPlan:
-              generated.prioritizedFixList,
-
-            roadmap: generated.roadmap,
-          }
-        );
-
-      return res.status(201).json({
-        success: true,
-        data: saved,
-        metadata: {
-          operation:
-            "generate-and-save-stage2-plan",
-        },
-      });
+      return respondJobAccepted(res, "stage2-plan", enqueued);
     } catch (error) {
       console.error(
         "Failed to generate Stage 2 content plan:",
@@ -1965,38 +2002,12 @@ app.post(
         });
       }
 
-      const agent =
-        new ContentProductionAgent();
+      const enqueued = await jobQueue.enqueueOnce(
+        tenantId,
+        "stage3-produce"
+      );
 
-      const agentOutput =
-        await agent.execute({
-          tenantContext:
-            buildTenantContext(
-              tenantId,
-              schemaName
-            ),
-          payload: { tenantId },
-        });
-
-      if (
-        !agentOutput.success ||
-        !agentOutput.data
-      ) {
-        return res.status(422).json({
-          success: false,
-          error:
-            agentOutput.error ||
-            "Content production failed.",
-        });
-      }
-
-      return res.status(201).json({
-        success: true,
-        data: agentOutput.data,
-        metadata: {
-          operation: "stage3-produce",
-        },
-      });
+      return respondJobAccepted(res, "stage3-produce", enqueued);
     } catch (error) {
       console.error(
         "Failed to run Stage 3 content production:",
@@ -2047,37 +2058,12 @@ app.post(
         });
       }
 
-      const agent = new TechnicalFixAgent();
+      const enqueued = await jobQueue.enqueueOnce(
+        tenantId,
+        "stage3-fix"
+      );
 
-      const agentOutput =
-        await agent.execute({
-          tenantContext:
-            buildTenantContext(
-              tenantId,
-              schemaName
-            ),
-          payload: { tenantId },
-        });
-
-      if (
-        !agentOutput.success ||
-        !agentOutput.data
-      ) {
-        return res.status(422).json({
-          success: false,
-          error:
-            agentOutput.error ||
-            "Technical fix run failed.",
-        });
-      }
-
-      return res.status(201).json({
-        success: true,
-        data: agentOutput.data,
-        metadata: {
-          operation: "stage3-fix",
-        },
-      });
+      return respondJobAccepted(res, "stage3-fix", enqueued);
     } catch (error) {
       console.error(
         "Failed to run Stage 3 technical fixes:",
@@ -2375,38 +2361,12 @@ app.post(
         });
       }
 
-      const agent =
-        new MonitoringAgent();
+      const enqueued = await jobQueue.enqueueOnce(
+        tenantId,
+        "stage4-monitor"
+      );
 
-      const agentOutput =
-        await agent.execute({
-          tenantContext:
-            buildTenantContext(
-              tenantId,
-              schemaName
-            ),
-          payload: { tenantId },
-        });
-
-      if (
-        !agentOutput.success ||
-        !agentOutput.data
-      ) {
-        return res.status(422).json({
-          success: false,
-          error:
-            agentOutput.error ||
-            "Monitoring run failed.",
-        });
-      }
-
-      return res.status(201).json({
-        success: true,
-        data: agentOutput.data,
-        metadata: {
-          operation: "stage4-monitor",
-        },
-      });
+      return respondJobAccepted(res, "stage4-monitor", enqueued);
     } catch (error) {
       console.error(
         "Failed to run Stage 4 monitoring check:",
@@ -2457,38 +2417,12 @@ app.post(
         });
       }
 
-      const agent =
-        new ReportGenerationAgent();
+      const enqueued = await jobQueue.enqueueOnce(
+        tenantId,
+        "stage4-report"
+      );
 
-      const agentOutput =
-        await agent.execute({
-          tenantContext:
-            buildTenantContext(
-              tenantId,
-              schemaName
-            ),
-          payload: { tenantId },
-        });
-
-      if (
-        !agentOutput.success ||
-        !agentOutput.data
-      ) {
-        return res.status(422).json({
-          success: false,
-          error:
-            agentOutput.error ||
-            "Report generation failed.",
-        });
-      }
-
-      return res.status(201).json({
-        success: true,
-        data: agentOutput.data,
-        metadata: {
-          operation: "stage4-report",
-        },
-      });
+      return respondJobAccepted(res, "stage4-report", enqueued);
     } catch (error) {
       console.error(
         "Failed to generate Stage 4 report:",

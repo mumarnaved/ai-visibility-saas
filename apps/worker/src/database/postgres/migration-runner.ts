@@ -276,6 +276,11 @@ export const BASELINE_MARKERS: Record<
       "tenants",
       "manifest"
     ),
+    "010_create_jobs": relations(
+      "jobs",
+      "idx_jobs_status_run_at",
+      "idx_jobs_tenant_id"
+    ),
   },
 };
 
