@@ -146,6 +146,8 @@ import {
   handleStripeWebhookEvent,
 } from "../services/stripe-webhook-handler.js";
 
+import { buildCorsOptions } from "./cors-config.js";
+
 const app: express.Express = express();
 
 const PORT = Number(
@@ -158,13 +160,12 @@ const PORT = Number(
    MIDDLEWARE
 ======================================== */
 
-app.use(
-  cors({
-    origin:
-      process.env.WEB_APP_URL ??
-      "http://localhost:3000",
-  })
-);
+/*
+ * First middleware on purpose: cors() answers
+ * OPTIONS preflights itself (204), so they never
+ * reach requireAuth, tenant checks or any route.
+ */
+app.use(cors(buildCorsOptions()));
 
 /* ========================================
    STRIPE WEBHOOK
