@@ -1,2 +1,2 @@
-# local runtime storage (default STORAGE_ROOT)
-storage/
+# local runtime storage (default STORAGE_ROOT), root of apps/worker only
+/storage/

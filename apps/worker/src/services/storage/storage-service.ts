@@ -13,6 +13,10 @@ import {
   sep,
 } from "node:path";
 
+import {
+  SupabaseStorageAdapter,
+} from "./supabase-storage-adapter.js";
+
 /* ========================================
    STORAGE ADAPTER
 ======================================== */
@@ -211,8 +215,59 @@ export class LocalFilesystemStorageAdapter
 }
 
 /* ========================================
-   SINGLETON
+   BACKEND SELECTION
+
+   STORAGE_BACKEND=supabase uses the private
+   Supabase bucket (SUPABASE_URL,
+   SUPABASE_SERVICE_ROLE_KEY and optionally
+   SUPABASE_STORAGE_BUCKET). Anything else is
+   the local filesystem, so local dev and tests
+   need no configuration.
 ======================================== */
 
-export const storageService: StorageAdapter =
-  new LocalFilesystemStorageAdapter();
+export function createStorageAdapter(
+  env: NodeJS.ProcessEnv = process.env
+): StorageAdapter {
+  if (env.STORAGE_BACKEND?.trim().toLowerCase() !== "supabase") {
+    return new LocalFilesystemStorageAdapter();
+  }
+
+  const missing = [
+    "SUPABASE_URL",
+    "SUPABASE_SERVICE_ROLE_KEY",
+  ].filter((name) => !env[name]?.trim());
+
+  if (missing.length > 0) {
+    throw new Error(
+      `STORAGE_BACKEND=supabase requires ${missing.join(" and ")}.`
+    );
+  }
+
+  return new SupabaseStorageAdapter({
+    url: env.SUPABASE_URL!.trim(),
+    serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY!.trim(),
+    bucket: env.SUPABASE_STORAGE_BUCKET?.trim() || undefined,
+  });
+}
+
+/* ========================================
+   SINGLETON
+
+   Resolved on first use, so a misconfigured
+   backend fails the storage call (a warning for
+   the best-effort manifest copy) instead of
+   crashing the whole app at import time.
+======================================== */
+
+let resolved: StorageAdapter | undefined;
+
+const resolveAdapter = (): StorageAdapter =>
+  (resolved ??= createStorageAdapter());
+
+export const storageService: StorageAdapter = {
+  write: (key, content) =>
+    resolveAdapter().write(key, content),
+  read: (key) => resolveAdapter().read(key),
+  delete: (key) => resolveAdapter().delete(key),
+  list: (prefix) => resolveAdapter().list(prefix),
+};
