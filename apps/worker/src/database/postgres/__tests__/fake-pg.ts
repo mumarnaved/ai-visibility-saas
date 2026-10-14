@@ -425,6 +425,10 @@ export class FakePg implements MigrationPool {
 
       if (row) {
         row.status = setStatus[1];
+
+        if (/manifest = NULL/i.test(text)) {
+          row.manifest = null;
+        }
       }
 
       return [];

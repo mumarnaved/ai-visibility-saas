@@ -8,6 +8,14 @@ import {
   storageService,
 } from "../../services/storage/storage-service.js";
 
+import {
+  tenantNamespaces,
+} from "../../context/tenant-manifest.js";
+
+import {
+  runTenantDeprovisioning,
+} from "./deprovisioning-flow.js";
+
 /* ========================================
    TYPES
 ======================================== */
@@ -15,6 +23,35 @@ import {
 export interface DeprovisionedTenant {
   tenantId: string;
   schemaName: string;
+}
+
+/* ========================================
+   MARK DEPROVISIONED
+
+   The manifest is cleared in the same UPDATE
+   that flips the status, as the very last step.
+======================================== */
+
+export async function markTenantDeprovisioned(
+  db: {
+    query(
+      sql: string,
+      params?: unknown[]
+    ): Promise<unknown>;
+  },
+  tenantId: string
+): Promise<void> {
+  await db.query(
+    `
+      UPDATE platform.tenants
+      SET
+        status = 'deprovisioned',
+        manifest = NULL,
+        updated_at = NOW()
+      WHERE id = $1
+    `,
+    [tenantId]
+  );
 }
 
 /* ========================================
@@ -93,59 +130,58 @@ export async function runDueDeprovisioning(): Promise<
     const tenantId = row.id;
     const schemaName = row.schema_name;
 
-    /*
-     * The storage prefix is derived the
-     * same deterministic way the Stage 1
-     * audit route builds it.
-     */
-    const storagePrefix =
-      `tenant-${tenantId}`;
+    await runTenantDeprovisioning(
+      {
+        dropSchema: async (name) => {
+          await pool.query(
+            `
+              DROP SCHEMA IF EXISTS ${quoteIdentifier(
+                name
+              )} CASCADE
+            `
+          );
+        },
 
-    await pool.query(
-      `
-        DROP SCHEMA IF EXISTS ${quoteIdentifier(
-          schemaName
-        )} CASCADE
-      `
-    );
+        purgeStorage: async (prefix) => {
+          const storedKeys =
+            await storageService.list(prefix);
 
-    const storedKeys =
-      await storageService.list(
-        storagePrefix
-      );
+          for (const key of storedKeys) {
+            await storageService.delete(key);
+          }
+        },
 
-    for (const key of storedKeys) {
-      await storageService.delete(key);
-    }
+        revokeCredentials: async (id) => {
+          const credentialResult =
+            await pool.query<{
+              provider: string;
+            }>(
+              `
+                SELECT provider
+                FROM platform.credential_vault
+                WHERE tenant_id = $1
+              `,
+              [id]
+            );
 
-    const credentialResult =
-      await pool.query<{
-        provider: string;
-      }>(
-        `
-          SELECT provider
-          FROM platform.credential_vault
-          WHERE tenant_id = $1
-        `,
-        [tenantId]
-      );
+          for (const credentialRow of credentialResult.rows) {
+            await revokeCredential(
+              id,
+              credentialRow.provider
+            );
+          }
+        },
 
-    for (const credentialRow of credentialResult.rows) {
-      await revokeCredential(
+        markDeprovisioned: (id) =>
+          markTenantDeprovisioned(pool, id),
+      },
+      {
         tenantId,
-        credentialRow.provider
-      );
-    }
-
-    await pool.query(
-      `
-        UPDATE platform.tenants
-        SET
-          status = 'deprovisioned',
-          updated_at = NOW()
-        WHERE id = $1
-      `,
-      [tenantId]
+        schemaName,
+        storagePrefix:
+          tenantNamespaces(tenantId)
+            .storagePrefix,
+      }
     );
 
     torn.push({

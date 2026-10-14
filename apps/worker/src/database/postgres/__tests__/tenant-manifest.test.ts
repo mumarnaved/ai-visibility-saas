@@ -135,8 +135,12 @@ describe("tenant manifest helper", () => {
     }
 
     assert.ok(
-      deprovision.includes("`tenant-${tenantId}`"),
-      "tenant-deprovisioning.ts no longer uses the tenant-<id> storage prefix"
+      deprovision.includes("tenantNamespaces(tenantId)"),
+      "tenant-deprovisioning.ts no longer takes the storage prefix from tenantNamespaces"
+    );
+    assert.ok(
+      !deprovision.includes("`tenant-${tenantId}`"),
+      "tenant-deprovisioning.ts hand-builds the storage prefix again"
     );
   });
 
