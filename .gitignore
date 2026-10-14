@@ -35,3 +35,6 @@ yarn-error.log*
 /npm
 /pnpm
 /type
+
+# local runtime storage (tenant files, manifest copies)
+apps/worker/storage/
