@@ -29,6 +29,65 @@ interface BillingStatus {
   currentPeriodEnd: string | null;
 }
 
+interface ProviderUsage {
+  provider: "firecrawl" | "serpapi" | "openrouter";
+  unit: string;
+  requests: number;
+  failedRequests: number;
+  units: number;
+  costEstimate: number;
+}
+
+interface MonthlyUsage {
+  period: {
+    label: string;
+    start: string;
+    end: string;
+  };
+  providers: ProviderUsage[];
+  totalCostEstimate: number;
+  currency: "USD";
+}
+
+const PROVIDER_LABELS: Record<
+  ProviderUsage["provider"],
+  { name: string; detail: string }
+> = {
+  openrouter: {
+    name: "OpenRouter",
+    detail: "AI answer checks",
+  },
+  firecrawl: {
+    name: "Firecrawl",
+    detail: "Page scraping",
+  },
+  serpapi: {
+    name: "SerpApi",
+    detail: "Search lookups",
+  },
+};
+
+function formatCost(value: number): string {
+  if (value === 0) {
+    return "$0.00";
+  }
+
+  return value < 0.01
+    ? `$${value.toFixed(4)}`
+    : `$${value.toFixed(2)}`;
+}
+
+function formatUnits(
+  units: number,
+  unit: string
+): string {
+  const rounded = Math.round(units);
+
+  return `${rounded.toLocaleString()} ${unit}${
+    rounded === 1 ? "" : "s"
+  }`;
+}
+
 const PLAN_LABELS: Record<
   PlanTier,
   string
@@ -84,6 +143,14 @@ export default function SettingsPage() {
       null
     );
 
+  const [usage, setUsage] =
+    useState<MonthlyUsage | null>(
+      null
+    );
+
+  const [usageError, setUsageError] =
+    useState("");
+
   const [loading, setLoading] =
     useState(true);
 
@@ -106,6 +173,52 @@ export default function SettingsPage() {
         );
 
       setTenant(loadedTenant);
+
+      /*
+       * Usage is informational: if it fails to
+       * load, say so in its own card and carry on
+       * loading billing, rather than failing the
+       * whole page.
+       */
+      if (loadedTenant) {
+        void (async () => {
+          try {
+            setUsageError("");
+
+            const usageResponse =
+              await authFetch(
+                `${API_BASE_URL}/api/tenants/${loadedTenant.id}/usage`,
+                { cache: "no-store" }
+              );
+
+            const usageJson =
+              await usageResponse.json();
+
+            if (
+              !usageResponse.ok ||
+              !usageJson.success
+            ) {
+              throw new Error(
+                usageJson.error ||
+                  `Usage API returned ${usageResponse.status}`
+              );
+            }
+
+            setUsage(
+              usageJson.data as MonthlyUsage
+            );
+          } catch (usageErr) {
+            console.error(
+              "Usage load failed:",
+              usageErr
+            );
+
+            setUsageError(
+              "Usage could not be loaded right now."
+            );
+          }
+        })();
+      }
 
       const billingResponse =
         await authFetch(
@@ -461,6 +574,116 @@ export default function SettingsPage() {
               </div>
 
             </div>
+
+          </div>
+
+        </section>
+
+        {/* USAGE */}
+
+        <section className="mt-6 rounded-xl border border-border bg-surface shadow-sm">
+
+          <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
+            <div>
+              <h2 className="text-base font-semibold">
+                Usage
+              </h2>
+
+              <p className="mt-1 text-sm text-ink-muted">
+                Estimated cost of the external
+                services your audits use
+                {usage
+                  ? ` in ${usage.period.label}`
+                  : " this month"}
+                .
+              </p>
+            </div>
+
+            <div className="text-right">
+              <div className="text-xs font-medium uppercase tracking-wide text-ink-faint">
+                Total (est.)
+              </div>
+
+              <div className="mt-1 text-lg font-bold">
+                {usage
+                  ? formatCost(
+                      usage.totalCostEstimate
+                    )
+                  : "—"}
+              </div>
+            </div>
+          </div>
+
+          <div className="p-6">
+
+            {usageError ? (
+              <p className="text-sm text-danger-text">
+                {usageError}
+              </p>
+            ) : !usage ? (
+              <p className="text-sm text-ink-muted">
+                Loading usage…
+              </p>
+            ) : (
+              <div className="divide-y divide-border rounded-lg border border-border">
+                {usage.providers.map(
+                  (item) => {
+                    const label =
+                      PROVIDER_LABELS[
+                        item.provider
+                      ];
+
+                    return (
+                      <div
+                        key={item.provider}
+                        className="flex items-center justify-between gap-4 px-4 py-3"
+                      >
+                        <div>
+                          <div className="text-sm font-semibold">
+                            {label.name}
+                          </div>
+
+                          <div className="mt-1 text-xs text-ink-faint">
+                            {label.detail}
+                          </div>
+                        </div>
+
+                        <div className="text-right">
+                          <div className="text-sm font-medium">
+                            {formatUnits(
+                              item.units,
+                              item.unit
+                            )}
+                          </div>
+
+                          <div className="mt-1 text-xs text-ink-faint">
+                            {item.requests.toLocaleString()}{" "}
+                            request
+                            {item.requests === 1
+                              ? ""
+                              : "s"}
+                            {item.failedRequests >
+                            0
+                              ? `, ${item.failedRequests.toLocaleString()} failed`
+                              : ""}
+                            {" · "}
+                            {formatCost(
+                              item.costEstimate
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+                )}
+              </div>
+            )}
+
+            <p className="mt-4 text-xs text-ink-faint">
+              Costs are estimates from list prices,
+              not an invoice. Usage resets at the
+              start of each month (UTC).
+            </p>
 
           </div>
 
