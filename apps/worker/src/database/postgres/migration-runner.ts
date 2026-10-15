@@ -82,6 +82,29 @@ export function platformMigrationsDirectory(): string {
   return resolveMigrationsDirectory("platform");
 }
 
+/*
+ * search_path for a tenant migration: the tenant's own schema
+ * first (so unqualified CREATE TABLE lands there), then
+ * "extensions", then "public".
+ *
+ * Extensions such as pgvector live in "extensions" on Supabase
+ * (the CREATE EXTENSION default there) and in "public" on a
+ * plain local Postgres. The role's default path on Supabase
+ * already includes "extensions", but SET LOCAL replaces it, so
+ * without naming it here tenant migration 002 (VECTOR(1536))
+ * failed with: type "vector" does not exist.
+ *
+ * Listing a schema that does not exist is harmless in Postgres
+ * (it is skipped), so this is safe on databases with no
+ * "extensions" schema. Tables are always created in the first
+ * schema, so nothing ever lands in "extensions".
+ */
+export function tenantSearchPath(
+  quotedSchema: string
+): string {
+  return `${quotedSchema}, extensions, public`;
+}
+
 export function quoteIdentifier(
   identifier: string
 ): string {
@@ -590,7 +613,7 @@ export async function applySchemaMigrations(
          */
         if (kind === "tenant") {
           await client.query(
-            `SET LOCAL search_path TO ${quotedSchema}, public`
+            `SET LOCAL search_path TO ${tenantSearchPath(quotedSchema)}`
           );
         }
 
