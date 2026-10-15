@@ -5,9 +5,13 @@ Rule for every phase: finish it, run it, verify the acceptance checks, then move
 
 Repo facts (verified): pnpm monorepo. `apps/worker` (Express 5, TS, ESM), `apps/web` (Next.js), `packages/agent-contracts`, SQL in `database/platform` and `database/tenant-template`. Auth is custom (bcrypt + sessions), LLM is OpenRouter, crawling is Firecrawl, competitor data is SerpApi.
 
+Hosting and decisions made: the worker is hosted on Vercel (Railway is no longer used). Storage is Supabase Storage (decision 5 below is resolved).
+
+Status: Phase 0 DONE. Phase 1 steps 1, 2, 3 and 5 DONE. Steps 4, 6 and 7 are open.
+
 ---
 
-## Phase 0: Security fix (do first, before anything else)
+## Phase 0: Security fix (do first, before anything else) — DONE
 
 **Problem:** `/api/tenants/:tenantId/*` routes in `apps/worker/src/api/server.ts` require login (`requireAuth`) but never check that the user owns the tenant. `resolveTenantSchema()` looks up the schema by ID only.
 
@@ -23,11 +27,11 @@ Repo facts (verified): pnpm monorepo. `apps/worker` (Express 5, TS, ESM), `apps/
 
 ## Phase 1: Foundation (spec §6, §7.12, §10, §15, §18)
 
-1. **Versioned migration runner.** Add `schema_migrations(version, applied_at)` inside each tenant schema. Replace the naive `split(";")` in `tenant-schema-provisioner.ts` with proper execution of each file as one transaction (use `pool.query(fileContents)`). Write `migrate-all-tenants` that loops all active tenants and applies only unapplied versions. Same idea for `platform` migrations.
-2. **`tenant_manifest.json`.** On provisioning, write the manifest (schema, storage prefix, vault namespace, vector namespace) to the tenant's storage prefix and return it from the Provisioning Agent. Make `Provisioning Agent` own the full Stage 0: schema, storage prefix, vault entry, vector namespace, manifest, then trigger the first audit.
-3. **Durable storage.** Keep `StorageAdapter`, add an S3 or Supabase Storage implementation, chosen by env. The local filesystem adapter will not survive Vercel/Railway restarts. Keep the `..` path-escape guard. Fix teardown so it uses the same prefix function as writes (single `buildTenantContext` helper, currently duplicated in `server.ts`, `automatic-scan.ts`).
+1. **[DONE] Versioned migration runner.** Add `schema_migrations(version, applied_at)` inside each tenant schema. Replace the naive `split(";")` in `tenant-schema-provisioner.ts` with proper execution of each file as one transaction (use `pool.query(fileContents)`). Write `migrate-all-tenants` that loops all active tenants and applies only unapplied versions. Same idea for `platform` migrations.
+2. **[DONE] `tenant_manifest.json`.** On provisioning, write the manifest (schema, storage prefix, vault namespace, vector namespace) to the tenant's storage prefix and return it from the Provisioning Agent. Make `Provisioning Agent` own the full Stage 0: schema, storage prefix, vault entry, vector namespace, manifest, then trigger the first audit.
+3. **[DONE] Durable storage.** Implemented as `SupabaseStorageAdapter` behind `StorageAdapter`, selected with `STORAGE_BACKEND=supabase`; smoke-tested against the real bucket. The local filesystem adapter will not survive Vercel restarts. Keep the `..` path-escape guard. Fix teardown so it uses the same prefix function as writes (single `buildTenantContext` helper, currently duplicated in `server.ts`, `automatic-scan.ts`).
 4. **One `buildTenantContext`.** Move it into `packages/agent-contracts` or `context/`, delete the copies. Make the Orchestrator the only way routes run agents (routes currently call pipelines directly). Orchestrator must: inject context, record each run (tenant, agent, status, duration, error), retry with backoff, and reject payloads whose tenantId differs from the context.
-5. **Postgres-backed job queue** (`queue/` is empty). Table `platform.jobs(id, tenant_id, type, payload, status, attempts, run_at, locked_at, error)`. Worker loop uses `FOR UPDATE SKIP LOCKED`. Stage 1 to 4 routes should enqueue and return a job id; the web app polls status. Long audits must not run inside an HTTP request. The queue worker must run on Railway (not Vercel serverless).
+5. **[DONE] Postgres-backed job queue.** `platform.jobs` (migration 010), claimed with `FOR UPDATE SKIP LOCKED`, exponential-backoff retries, stuck-job requeue. Stage 1 to 4 routes enqueue and return 202 with a job id; the web app polls `GET /api/tenants/:tenantId/jobs/:jobId`. Deviation from the original plan: there is no Railway worker loop (Railway is no longer used). Jobs are drained by the `CRON_SECRET`-protected `POST /api/jobs/run` (fails closed when the secret is unset, 250s budget), which is triggered by the worker itself (kick via `waitUntil` after enqueue) and by a Supabase `pg_cron` job every minute as a safety net (SQL is run manually, not a migration).
 6. **Usage metering** (`usage/` is empty). Table `platform.usage_events(tenant_id, provider, units, cost_estimate, created_at)`. Wrap every Firecrawl, SerpApi, OpenRouter, DataForSEO call in a `meter()` helper. Add a per-tenant usage endpoint and show it on the settings page.
 7. **Per-tenant rate limiting** at the platform level for shared APIs (token bucket per tenant per provider), so one tenant cannot exhaust a shared quota.
 
@@ -89,6 +93,6 @@ Repo facts (verified): pnpm monorepo. `apps/worker` (Express 5, TS, ESM), `apps/
 2. **Ubersuggest** has no stable public API. Drop it (DataForSEO covers it) or keep a scraper-based option?
 3. **SerpApi / OpenRouter vs. DataForSEO / Anthropic SDK:** keep the current providers, or move to the spec's?
 4. **Auth:** keep the custom auth, or migrate to Supabase Auth as the spec says?
-5. **Storage backend:** S3 or Supabase Storage?
+5. ~~**Storage backend:** S3 or Supabase Storage?~~ RESOLVED: Supabase Storage.
 6. **Email provider** for reports (Resend, SES, etc.)?
 7. **N** for the Scale tier website limit.
