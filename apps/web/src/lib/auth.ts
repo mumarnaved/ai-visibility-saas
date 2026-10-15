@@ -35,10 +35,15 @@ export interface AuthSession {
   expiresAt: string;
 }
 
+/*
+ * tenant and workspace are null for a user who has deleted
+ * every workspace: they are still signed in and are sent to
+ * onboarding to create a new one.
+ */
 export interface AuthData {
   user: AuthUser;
-  tenant: AuthTenant;
-  workspace: AuthWorkspace;
+  tenant: AuthTenant | null;
+  workspace: AuthWorkspace | null;
   session: AuthSession;
 }
 
@@ -91,8 +96,6 @@ export function getAuth(): AuthData | null {
     if (
       !parsed ||
       !parsed.user ||
-      !parsed.tenant ||
-      !parsed.workspace ||
       !parsed.session
     ) {
       return null;

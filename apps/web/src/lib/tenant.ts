@@ -68,6 +68,39 @@ export function setSelectedTenantId(
   );
 }
 
+export function clearSelectedTenantId(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.removeItem(
+    SELECTED_TENANT_KEY
+  );
+}
+
+/* ========================================
+   WORKSPACE LABELS
+
+   Two workspaces can share a name (the slug is what is
+   unique), so the switcher adds the slug to any name that
+   appears more than once.
+======================================== */
+
+export function workspaceLabel(
+  tenant: Pick<TenantSummary, "name" | "slug">,
+  all: Pick<TenantSummary, "name">[]
+): string {
+  const sameName = all.filter(
+    (other) =>
+      other.name.trim().toLowerCase() ===
+      tenant.name.trim().toLowerCase()
+  ).length;
+
+  return sameName > 1
+    ? `${tenant.name} (${tenant.slug})`
+    : tenant.name;
+}
+
 /* ========================================
    FETCH TENANT LIST
 ======================================== */

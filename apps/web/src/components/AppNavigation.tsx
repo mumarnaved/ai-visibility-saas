@@ -6,7 +6,10 @@ import { usePathname, useRouter } from "next/navigation";
 
 import { logout } from "../lib/auth";
 
-import type { TenantSummary } from "../lib/tenant";
+import {
+  workspaceLabel,
+  type TenantSummary,
+} from "../lib/tenant";
 
 import { PUBLIC_PATHS } from "./AuthGuard";
 
@@ -112,9 +115,10 @@ function NavigationContent({
         })}
       </nav>
 
-      {tenant && (
-        <div className="border-t border-glass-border p-4">
-          <div className="glass-nested rounded-lg p-3">
+      <div className="border-t border-glass-border p-4">
+        <div className="glass-nested rounded-lg p-3">
+          {tenant && (
+            <>
             <div className="text-xs text-ink-muted">
               Workspace
             </div>
@@ -135,7 +139,7 @@ function NavigationContent({
                     key={item.id}
                     value={item.id}
                   >
-                    {item.name}
+                    {workspaceLabel(item, tenants)}
                   </option>
                 ))}
               </select>
@@ -145,18 +149,20 @@ function NavigationContent({
               </div>
             )}
 
+            </>
+          )}
+
             <button
               onClick={onLogout}
               disabled={loggingOut}
-              className="mt-3 w-full rounded-lg border border-glass-border bg-glass-surface px-3 py-2 text-sm font-medium text-ink-secondary transition hover:bg-glass-surface-strong hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+              className={`${tenant ? "mt-3" : ""} w-full rounded-lg border border-glass-border bg-glass-surface px-3 py-2 text-sm font-medium text-ink-secondary transition hover:bg-glass-surface-strong hover:text-ink disabled:cursor-not-allowed disabled:opacity-50`}
             >
               {loggingOut
                 ? "Logging out..."
                 : "Log out"}
             </button>
-          </div>
         </div>
-      )}
+      </div>
 
       <div className="border-t border-glass-border p-4">
         <Link

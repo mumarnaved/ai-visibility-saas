@@ -1,12 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { authFetch } from "../../lib/auth";
 import {
+  clearSelectedTenantId,
+  fetchTenantList,
   loadActiveTenant,
+  setSelectedTenantId,
   type TenantSummary,
 } from "../../lib/tenant";
+import Modal from "../../components/Modal";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ??
@@ -135,6 +140,8 @@ const SELF_SERVE_PLANS: {
 ];
 
 export default function SettingsPage() {
+  const router = useRouter();
+
   const [tenant, setTenant] =
     useState<Tenant | null>(null);
 
@@ -149,6 +156,18 @@ export default function SettingsPage() {
     );
 
   const [usageError, setUsageError] =
+    useState("");
+
+  const [showDelete, setShowDelete] =
+    useState(false);
+
+  const [confirmSlug, setConfirmSlug] =
+    useState("");
+
+  const [deleting, setDeleting] =
+    useState(false);
+
+  const [deleteError, setDeleteError] =
     useState("");
 
   const [loading, setLoading] =
@@ -338,6 +357,114 @@ export default function SettingsPage() {
       );
 
       setUpgrading(null);
+    }
+  }
+
+  /* ========================================
+     DELETE WORKSPACE
+
+     Starts the server's deprovisioning flow: the
+     workspace disappears at once and its data is
+     only purged after the retention period. Then
+     land on another workspace, or on onboarding
+     when that was the last one.
+  ======================================== */
+
+  function closeDelete() {
+    if (deleting) {
+      return;
+    }
+
+    setShowDelete(false);
+    setConfirmSlug("");
+    setDeleteError("");
+  }
+
+  async function deleteWorkspace() {
+    if (
+      !tenant ||
+      confirmSlug.trim() !== tenant.slug
+    ) {
+      return;
+    }
+
+    try {
+      setDeleting(true);
+      setDeleteError("");
+
+      const response = await authFetch(
+        `${API_BASE_URL}/api/tenants/${tenant.id}`,
+        {
+          method: "DELETE",
+          body: JSON.stringify({
+            confirmSlug:
+              confirmSlug.trim(),
+          }),
+        }
+      );
+
+      const json = await response
+        .json()
+        .catch(() => null);
+
+      if (
+        !response.ok ||
+        !json?.success
+      ) {
+        throw new Error(
+          json?.error ||
+            "Failed to delete the workspace."
+        );
+      }
+
+      toast.success(
+        `"${tenant.name}" was deleted.`
+      );
+
+      /*
+       * Pick where to land. The deleted workspace is
+       * already gone from the list; if the list cannot
+       * be read, fall back to the home page, which
+       * redirects to onboarding when nothing is left.
+       */
+      clearSelectedTenantId();
+
+      let destination = "/";
+
+      try {
+        const remaining =
+          await fetchTenantList(
+            API_BASE_URL
+          );
+
+        if (remaining.length === 0) {
+          destination = "/onboarding";
+        } else {
+          setSelectedTenantId(
+            remaining[0].id
+          );
+        }
+      } catch (listError) {
+        console.error(
+          "Could not reload workspaces after deleting:",
+          listError
+        );
+      }
+
+      router.replace(destination);
+    } catch (err) {
+      console.error(
+        "Delete workspace failed:",
+        err
+      );
+
+      setDeleteError(
+        err instanceof Error
+          ? err.message
+          : "Failed to delete the workspace."
+      );
+
+      setDeleting(false);
     }
   }
 
@@ -730,7 +857,164 @@ export default function SettingsPage() {
 
         </section>
 
+        {/* DANGER ZONE */}
+
+        <section className="mt-6 rounded-xl border border-danger-border bg-surface shadow-sm">
+
+          <div className="border-b border-danger-border px-6 py-5">
+            <h2 className="text-base font-semibold text-danger-text">
+              Danger zone
+            </h2>
+
+            <p className="mt-1 text-sm text-ink-muted">
+              Irreversible actions for this
+              workspace.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="text-sm font-medium">
+                Delete this workspace
+              </div>
+
+              <p className="mt-1 text-xs text-ink-muted">
+                It disappears immediately. Its data
+                is kept for a retention period
+                (30 days by default) and then
+                permanently removed.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              disabled={loading || !tenant}
+              onClick={() =>
+                setShowDelete(true)
+              }
+              className="shrink-0 rounded-lg border border-danger-border bg-danger-bg px-4 py-2 text-sm font-medium text-danger-text transition hover:bg-danger hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Delete workspace
+            </button>
+          </div>
+
+        </section>
+
       </div>
+
+      {showDelete && tenant && (
+        <Modal
+          title="Delete workspace"
+          subtitle="This starts permanent removal of this workspace."
+          onClose={closeDelete}
+        >
+          <div className="space-y-4 p-6">
+
+            <div className="rounded-lg border border-border bg-muted p-4">
+              <dl className="space-y-3 text-sm">
+                <div>
+                  <dt className="text-xs font-medium uppercase tracking-wide text-ink-faint">
+                    Name
+                  </dt>
+                  <dd className="mt-1 font-semibold">
+                    {tenant.name}
+                  </dd>
+                </div>
+
+                <div>
+                  <dt className="text-xs font-medium uppercase tracking-wide text-ink-faint">
+                    Slug
+                  </dt>
+                  <dd className="mt-1 break-all font-mono text-xs">
+                    {tenant.slug}
+                  </dd>
+                </div>
+
+                <div>
+                  <dt className="text-xs font-medium uppercase tracking-wide text-ink-faint">
+                    Tenant ID
+                  </dt>
+                  <dd className="mt-1 break-all font-mono text-xs">
+                    {tenant.id}
+                  </dd>
+                </div>
+              </dl>
+            </div>
+
+            <p className="text-sm text-ink-secondary">
+              The workspace and its audits,
+              plans and reports are hidden right
+              away and permanently removed after
+              the retention period. If you delete
+              your last workspace you will be
+              taken to onboarding to create a new
+              one.
+            </p>
+
+            <div>
+              <label
+                htmlFor="confirm-slug"
+                className="block text-sm font-medium"
+              >
+                Type{" "}
+                <span className="font-mono">
+                  {tenant.slug}
+                </span>{" "}
+                to confirm
+              </label>
+
+              <input
+                id="confirm-slug"
+                type="text"
+                value={confirmSlug}
+                onChange={(event) =>
+                  setConfirmSlug(
+                    event.target.value
+                  )
+                }
+                autoComplete="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                disabled={deleting}
+                className="mt-2 w-full rounded-lg border border-border-strong bg-surface px-3 py-2 font-mono text-sm outline-none focus:border-danger"
+              />
+            </div>
+
+            {deleteError && (
+              <p className="text-sm text-danger-text">
+                {deleteError}
+              </p>
+            )}
+
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={closeDelete}
+                disabled={deleting}
+                className="rounded-lg border border-border-strong px-4 py-2 text-sm font-medium transition hover:bg-muted disabled:opacity-50"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={deleteWorkspace}
+                disabled={
+                  deleting ||
+                  confirmSlug.trim() !==
+                    tenant.slug
+                }
+                className="rounded-lg bg-danger px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {deleting
+                  ? "Deleting..."
+                  : "Delete workspace"}
+              </button>
+            </div>
+
+          </div>
+        </Modal>
+      )}
 
     </main>
   );

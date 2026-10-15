@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 import { isAuthenticated } from "../lib/auth";
 
@@ -26,6 +26,7 @@ export default function AppShell({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
 
   const isPublicPage =
     PUBLIC_PATHS.includes(pathname);
@@ -65,6 +66,19 @@ export default function AppShell({
       setTenant(
         resolveActiveTenant(list)
       );
+
+      /*
+       * No workspace left (the user deleted their last one):
+       * send them to onboarding to create a new one. Only on a
+       * successful, empty list, and never while already on
+       * /onboarding, so this cannot loop or fire on an error.
+       */
+      if (
+        list.length === 0 &&
+        pathname !== "/onboarding"
+      ) {
+        router.replace("/onboarding");
+      }
     } catch (error) {
       console.error(
         "Failed to load workspaces:",

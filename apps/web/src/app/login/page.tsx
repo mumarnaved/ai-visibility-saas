@@ -78,8 +78,6 @@ export default function LoginPage() {
       if (
         !authData ||
         !authData.user ||
-        !authData.tenant ||
-        !authData.workspace ||
         !authData.session ||
         typeof authData.session
           .sessionToken !== "string" ||
@@ -95,7 +93,13 @@ export default function LoginPage() {
 
       toast.success("Welcome back!");
 
-      router.push("/");
+      /*
+       * A user who deleted every workspace has no tenant:
+       * go straight to onboarding to create a new one.
+       */
+      router.push(
+        authData.tenant ? "/" : "/onboarding"
+      );
     } catch (error) {
       setError(
         error instanceof Error
