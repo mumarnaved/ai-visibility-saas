@@ -6,10 +6,18 @@ import type { TenantRecord } from "./tenant-registry.js";
 
    create record -> provision schema -> persist
    manifest -> activate. Any failure marks the
-   tenant 'failed'; in particular a tenant is
-   never activated unless its manifest was
-   persisted. Dependencies are injected so the
-   ordering is testable without the real pool;
+   tenant 'failed' (retried once, so a database
+   blip cannot leave it 'provisioning') and then
+   rolls back what this attempt created: the
+   half-built schema and any manifest copy in
+   storage. In particular a tenant is never
+   activated unless its manifest was persisted.
+
+   A failed tenant has no workspace (the callers
+   create that only after this returns), so it is
+   not in anyone's workspace list or website-limit
+   count. Dependencies are injected so the ordering
+   is testable without the real pool;
    tenant-provisioning.ts wires the real ones.
 ======================================== */
 
@@ -37,6 +45,13 @@ export interface ProvisioningFlowDeps {
   activateTenant(tenantId: string): Promise<void>;
 
   failTenant(tenantId: string): Promise<void>;
+
+  /*
+   * Removes the schema and storage this attempt created
+   * for a tenant that failed. Best effort: its own errors
+   * never replace the original one.
+   */
+  rollbackTenant?(tenant: TenantRecord): Promise<void>;
 }
 
 export type ProvisionedTenant = TenantRecord & {
@@ -70,12 +85,29 @@ export async function runTenantProvisioning(
     };
   } catch (error) {
     /*
-     * Report the original error even if
-     * marking the tenant failed also fails.
+     * Report the original error even if marking
+     * the tenant failed, or cleaning up, also fails.
      */
     await deps
       .failTenant(tenant.id)
-      .catch(() => undefined);
+      .catch(() => deps.failTenant(tenant.id))
+      .catch((markError) => {
+        console.error(
+          `Could not mark tenant ${tenant.id} as failed:`,
+          markError
+        );
+      });
+
+    if (deps.rollbackTenant) {
+      await deps
+        .rollbackTenant(tenant)
+        .catch((rollbackError) => {
+          console.error(
+            `Could not roll back the partial provisioning of tenant ${tenant.id}:`,
+            rollbackError
+          );
+        });
+    }
 
     throw error;
   }

@@ -1,6 +1,8 @@
 import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
+import { resolveMigrationsDirectory } from "./migrations-path.js";
+
 /* ========================================
    VERSIONED MIGRATION RUNNER
 
@@ -67,30 +69,17 @@ export type MigrationKind =
   | "platform";
 
 /*
- * Same cwd-relative lookup the provisioner and
- * platform runner always used; run from
- * apps/worker (pnpm --filter worker ...).
+ * Resolved from this module's location (see
+ * migrations-path.ts), not process.cwd(), so they work when
+ * the process starts anywhere, including Vercel's /var/task.
+ * MIGRATIONS_ROOT overrides.
  */
 export function tenantMigrationsDirectory(): string {
-  return resolve(
-    process.cwd(),
-    "..",
-    "..",
-    "database",
-    "tenant-template",
-    "migrations"
-  );
+  return resolveMigrationsDirectory("tenant");
 }
 
 export function platformMigrationsDirectory(): string {
-  return resolve(
-    process.cwd(),
-    "..",
-    "..",
-    "database",
-    "platform",
-    "migrations"
-  );
+  return resolveMigrationsDirectory("platform");
 }
 
 export function quoteIdentifier(

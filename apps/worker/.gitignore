@@ -1,2 +1,6 @@
 # local runtime storage (default STORAGE_ROOT), root of apps/worker only
 /storage/
+
+# SQL migrations copied in by scripts/vercel-build.sh so they ship with the
+# function; the repo-level database/ folder is the source of truth.
+/database/
