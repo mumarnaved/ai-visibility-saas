@@ -26,9 +26,9 @@ import {
   approveContentPlan,
 } from "../database/postgres/content-plan/content-plan-repository.js";
 
-import {
-  PublishingAgent,
-} from "../agents/publishing/index.js";
+import { buildTenantContext } from "../context/tenant-context-instance.js";
+import { TenantNotUsableError } from "../context/build-tenant-context.js";
+import { orchestrator } from "../orchestrator/orchestrator-instance.js";
 
 import {
   getLatestMonitoringSnapshot,
@@ -1393,6 +1393,9 @@ app.post("/api/jobs/run", async (req, res) => {
   try {
     const summary = await runJobs(jobQueue, jobHandlers, {
       log: (line) => console.log(line),
+      /* A finished job no longer needs its step checkpoints. */
+      onJobFinished: (job) =>
+        orchestrator.releaseCheckpoints(job.id),
     });
 
     return res.json({ success: true, data: summary });
@@ -1933,19 +1936,6 @@ async function resolveTenantSchema(
   );
 }
 
-function buildTenantContext(
-  tenantId: string,
-  schemaName: string
-) {
-  return {
-    tenantId,
-    schema: schemaName,
-    storagePrefix: `tenant-${tenantId}`,
-    credentialNamespace: `credentials/tenant-${tenantId}`,
-    vectorNamespace: `vector-tenant-${tenantId}`,
-  };
-}
-
 /* ========================================
    REQUIRE PAID FEATURE ACCESS
 
@@ -2311,33 +2301,37 @@ app.post(
         });
       }
 
-      const schemaName =
-        await resolveTenantSchema(
-          tenantId
+      /*
+       * One context builder, one way to run an agent. An
+       * unknown or unusable tenant is a 404 (requireTenantAccess
+       * already screened non-members). Publishing is NOT
+       * idempotent, so it gets a single attempt: a retry after
+       * an ambiguous failure could publish twice.
+       */
+      let agentOutput;
+
+      try {
+        const context = await buildTenantContext(
+          tenantId,
+          (req as AuthenticatedRequest).auth?.user.id ?? null
         );
 
-      if (!schemaName) {
-        return res.status(404).json({
-          success: false,
-          error:
-            "Tenant not found.",
-        });
+        agentOutput = await orchestrator.run(
+          context,
+          "publishing",
+          { executionTaskId: taskId },
+          { maxAttempts: 1 }
+        );
+      } catch (error) {
+        if (error instanceof TenantNotUsableError) {
+          return res.status(404).json({
+            success: false,
+            error: "Tenant not found.",
+          });
+        }
+
+        throw error;
       }
-
-      const agent = new PublishingAgent();
-
-      const agentOutput =
-        await agent.execute({
-          tenantContext:
-            buildTenantContext(
-              tenantId,
-              schemaName
-            ),
-          payload: {
-            tenantId,
-            executionTaskId: taskId,
-          },
-        });
 
       if (
         !agentOutput.success ||
@@ -3117,8 +3111,7 @@ app.post(
 
       void runAutomaticScan(
         tenantId.trim(),
-        tenant.websiteUrl,
-        tenant.schemaName
+        tenant.websiteUrl
       );
 
       return res.json({
@@ -3209,8 +3202,7 @@ app.post(
 
         void runAutomaticScan(
           tenantId.trim(),
-          tenant.websiteUrl,
-          tenant.schemaName
+          tenant.websiteUrl
         );
       }
 

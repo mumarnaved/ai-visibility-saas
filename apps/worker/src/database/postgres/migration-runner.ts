@@ -300,6 +300,11 @@ export const BASELINE_MARKERS: Record<
     "012_create_rate_limit_buckets": relations(
       "rate_limit_buckets"
     ),
+    "013_create_agent_runs": relations(
+      "agent_runs",
+      "idx_agent_runs_tenant_started",
+      "idx_agent_runs_job_agent"
+    ),
   },
 };
 

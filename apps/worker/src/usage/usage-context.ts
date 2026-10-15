@@ -26,6 +26,14 @@ import { AsyncLocalStorage } from "node:async_hooks";
 export interface UsageContext {
   tenantId: string;
   jobId: string | null;
+
+  /*
+   * Epoch ms by which the current function invocation must
+   * be done (set by the job runner). The orchestrator will
+   * not START a new step too close to it; the job continues
+   * in a fresh invocation from its checkpoints instead.
+   */
+  deadlineAt: number | null;
   rateLimited: {
     provider: string;
     retryAfterSeconds: number;
@@ -37,9 +45,10 @@ const storage = new AsyncLocalStorage<UsageContext>();
 
 export function createUsageContext(
   tenantId: string,
-  jobId: string | null = null
+  jobId: string | null = null,
+  deadlineAt: number | null = null
 ): UsageContext {
-  return { tenantId, jobId, rateLimited: null };
+  return { tenantId, jobId, deadlineAt, rateLimited: null };
 }
 
 export function runInUsageContext<T>(

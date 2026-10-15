@@ -102,25 +102,31 @@ describe("tenant manifest helper", () => {
     });
   });
 
-  it("matches the prefixes the rest of the code builds", async () => {
+  it("has exactly one place that builds the prefixes: tenantNamespaces", async () => {
     /*
-     * Guards against drift: if one of the
-     * existing copies of the convention changes,
-     * this fails until the manifest agrees.
+     * Guards against drift. Routes, the automatic scan and the
+     * job handlers used to hand-build "tenant-<id>" strings
+     * (two copies of buildTenantContext); they now all call the
+     * single buildTenantContext, which takes every convention
+     * from tenantNamespaces. If a hand-built copy comes back,
+     * this fails.
      */
     const read = (path: string) =>
       readFile(resolve(here, path), "utf8");
 
-    const [server, scan, deprovision] =
+    const [server, scan, handlers, builder, deprovision] =
       await Promise.all([
         read("../../../api/server.ts"),
         read("../../../services/automatic-scan.ts"),
+        read("../../../jobs/job-handlers.ts"),
+        read("../../../context/build-tenant-context.ts"),
         read("../tenant-deprovisioning.ts"),
       ]);
 
     for (const [name, source] of [
       ["server.ts", server],
       ["automatic-scan.ts", scan],
+      ["job-handlers.ts", handlers],
     ] as const) {
       for (const literal of [
         "`tenant-${tenantId}`",
@@ -128,11 +134,21 @@ describe("tenant manifest helper", () => {
         "`vector-tenant-${tenantId}`",
       ]) {
         assert.ok(
-          source.includes(literal),
-          `${name} no longer builds ${literal}`
+          !source.includes(literal),
+          `${name} hand-builds ${literal} again; use buildTenantContext`
         );
       }
+
+      assert.ok(
+        !/function buildTenantContext/.test(source),
+        `${name} defines its own buildTenantContext`
+      );
     }
+
+    assert.ok(
+      builder.includes("tenantNamespaces(tenant.id)"),
+      "buildTenantContext no longer takes the prefixes from tenantNamespaces"
+    );
 
     assert.ok(
       deprovision.includes("tenantNamespaces(tenantId)"),

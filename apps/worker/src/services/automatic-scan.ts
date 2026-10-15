@@ -3,10 +3,6 @@ import {
 } from "../agents/stage-1-audit-pipeline.js";
 
 import {
-  ContentPlanAgent,
-} from "../agents/content-plan/index.js";
-
-import {
   saveContentPlan,
 } from "../database/postgres/content-plan/content-plan-repository.js";
 
@@ -22,6 +18,10 @@ import {
   createUsageContext,
   runInUsageContext,
 } from "../usage/usage-context.js";
+
+import { buildTenantContext } from "../context/tenant-context-instance.js";
+
+import { orchestrator } from "../orchestrator/orchestrator-instance.js";
 
 /* ========================================
    DEFAULT QUERIES
@@ -54,19 +54,6 @@ function buildDefaultQueries(
   ];
 }
 
-function buildTenantContext(
-  tenantId: string,
-  schemaName: string
-) {
-  return {
-    tenantId,
-    schema: schemaName,
-    storagePrefix: `tenant-${tenantId}`,
-    credentialNamespace: `credentials/tenant-${tenantId}`,
-    vectorNamespace: `vector-tenant-${tenantId}`,
-  };
-}
-
 /* ========================================
    RUN AUTOMATIC SCAN
 
@@ -86,8 +73,7 @@ function buildTenantContext(
 
 export function runAutomaticScan(
   tenantId: string,
-  websiteUrl: string,
-  schemaName: string
+  websiteUrl: string
 ): Promise<void> {
   /*
    * Not a queued job, but it spends the same paid
@@ -97,22 +83,22 @@ export function runAutomaticScan(
    */
   return runInUsageContext(
     createUsageContext(tenantId),
-    () => scanTenant(tenantId, websiteUrl, schemaName)
+    () => scanTenant(tenantId, websiteUrl)
   );
 }
 
 async function scanTenant(
   tenantId: string,
-  websiteUrl: string,
-  schemaName: string
+  websiteUrl: string
 ): Promise<void> {
-  const tenantContext =
-    buildTenantContext(
-      tenantId,
-      schemaName
-    );
-
   try {
+    /*
+     * Inside the try so an unusable tenant (deleted, failed)
+     * ends as a recorded scan failure, like any other error.
+     */
+    const tenantContext =
+      await buildTenantContext(tenantId);
+
     await setScanStatus(
       tenantId,
       "auditing"
@@ -128,6 +114,7 @@ async function scanTenant(
 
     await pipeline.execute({
       tenantContext,
+      runAgent: orchestrator.runner(tenantContext),
       websiteUrl,
       brandName,
       queries:
@@ -142,14 +129,12 @@ async function scanTenant(
       "planning"
     );
 
-    const contentPlanAgent =
-      new ContentPlanAgent();
-
     const planOutput =
-      await contentPlanAgent.execute({
+      await orchestrator.run(
         tenantContext,
-        payload: { tenantId },
-      });
+        "content-plan",
+        { tenantId }
+      );
 
     if (
       !planOutput.success ||
@@ -162,10 +147,17 @@ async function scanTenant(
     }
 
     const generated =
-      planOutput.data;
+      planOutput.data as {
+        auditReportId: string;
+        summary: unknown;
+        contentGapMap: unknown;
+        entitySchemaPlan: unknown;
+        prioritizedFixList: unknown;
+        roadmap: unknown;
+      };
 
     await saveContentPlan(
-      schemaName,
+      tenantContext.schema,
       {
         auditReportId:
           generated.auditReportId,
@@ -182,7 +174,7 @@ async function scanTenant(
           generated.prioritizedFixList,
 
         roadmap: generated.roadmap,
-      }
+      } as never
     );
 
     await setScanStatus(

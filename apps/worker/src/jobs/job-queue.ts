@@ -285,7 +285,8 @@ export function createJobQueue(
   async function deferRateLimited(
     job: Pick<JobRow, "id">,
     message: string,
-    retryAfterSeconds: number
+    retryAfterSeconds: number,
+    options: { floorSeconds?: number } = {}
   ): Promise<void> {
     await db.query(
       `
@@ -302,7 +303,10 @@ export function createJobQueue(
       [
         job.id,
         message,
-        Math.max(retryAfterSeconds, backoffSeconds(1)),
+        Math.max(
+          retryAfterSeconds,
+          options.floorSeconds ?? backoffSeconds(1)
+        ),
       ]
     );
   }

@@ -1,17 +1,21 @@
-import { pool } from "../database/postgres/connection.js";
-
-import { tenantNamespaces } from "../context/tenant-manifest.js";
-
-import { Stage1AuditPipeline } from "../agents/stage-1-audit-pipeline.js";
-import { ContentPlanAgent } from "../agents/content-plan/index.js";
-import { ContentProductionAgent } from "../agents/content-production/index.js";
-import { TechnicalFixAgent } from "../agents/technical-fix/index.js";
-import { MonitoringAgent } from "../agents/monitoring/index.js";
-import { ReportGenerationAgent } from "../agents/report-generation/index.js";
+import {
+  Stage1AuditPipeline,
+  AgentStepFailedError,
+} from "../agents/stage-1-audit-pipeline.js";
 
 import { saveContentPlan } from "../database/postgres/content-plan/content-plan-repository.js";
 
-import { isDeletedTenantStatus } from "../lib/tenant-status.js";
+import {
+  TenantNotUsableError,
+  type TenantRuntime,
+} from "../context/build-tenant-context.js";
+import { buildTenantContext } from "../context/tenant-context-instance.js";
+
+import {
+  OrchestratorError,
+  type Orchestrator,
+} from "../orchestrator/orchestrator.js";
+import { orchestrator as sharedOrchestrator } from "../orchestrator/orchestrator-instance.js";
 
 import type { JobRow } from "./job-queue.js";
 import {
@@ -22,16 +26,26 @@ import {
 /* ========================================
    JOB TYPES
 
-   One handler per Stage 1-4 operation. These
-   are the bodies the stage routes used to run
-   inline; the routes now validate, enqueue and
-   return 202, and the runner calls these.
+   One handler per Stage 1-4 operation. Each builds the
+   tenant's context with buildTenantContext() and runs its
+   agent(s) through the orchestrator, which guards the
+   tenant, records every run, retries transient failures and
+   checkpoints finished steps under this job's id.
 
-   A handler throws to fail the attempt. An agent
-   that reports success=false has already used
-   its own retries and fallback model, so that is
-   a NonRetryableJobError; anything else (a
-   database blip, a crash) is retried.
+   What a handler throws decides what the job runner does:
+   - NonRetryableJobError: the job fails now (bad input, a
+     deleted tenant, an agent failure that would repeat);
+   - RateLimitError / StepBudgetExceededError (from the
+     orchestrator): the runner defers the job; steps already
+     done are checkpointed and are not run or paid for again;
+   - anything else: retried with backoff.
+
+   Length: Stage 1 is five steps and may not fit one
+   300s invocation. The orchestrator refuses to start a step
+   it cannot finish (StepBudgetExceededError), the job is
+   parked without using an attempt, and the next invocation
+   resumes from the checkpoints. That is the split into
+   smaller pieces, with no extra job rows to manage.
 ======================================== */
 
 export const JOB_TYPES = [
@@ -48,154 +62,186 @@ export type JobType = (typeof JOB_TYPES)[number];
 export const isJobType = (value: string): value is JobType =>
   (JOB_TYPES as readonly string[]).includes(value);
 
-async function tenantSchema(
-  tenantId: string
-): Promise<string> {
-  const result = await pool.query(
-    `
-      SELECT schema_name, status
-      FROM platform.tenants
-      WHERE id = $1
-      LIMIT 1
-    `,
-    [tenantId]
-  );
-
-  const schemaName = result.rows[0]?.schema_name;
-
-  if (typeof schemaName !== "string") {
-    throw new NonRetryableJobError("Tenant not found.");
-  }
-
-  /*
-   * A workspace deleted while its job sat in the queue
-   * must not spend paid API calls: fail the job before
-   * any agent runs.
-   */
-  if (isDeletedTenantStatus(result.rows[0].status)) {
-    throw new NonRetryableJobError("Workspace was deleted.");
-  }
-
-  return schemaName;
+export interface JobHandlerDeps {
+  orchestrator: Orchestrator;
+  buildContext: (tenantId: string) => Promise<TenantRuntime>;
 }
 
-async function tenantContext(job: JobRow) {
-  const tenantId = job.tenant_id;
+/* ---------------------------------------- */
 
-  return {
-    tenantId,
-    schema: await tenantSchema(tenantId),
-    ...tenantNamespaces(tenantId),
-  };
-}
+function makeHelpers(deps: JobHandlerDeps) {
+  async function contextFor(job: JobRow): Promise<TenantRuntime> {
+    try {
+      return await deps.buildContext(job.tenant_id);
+    } catch (error) {
+      if (error instanceof TenantNotUsableError) {
+        throw new NonRetryableJobError(error.message);
+      }
 
-/* Runs an agent and unwraps its output, or fails the job. */
-async function runAgent(
-  job: JobRow,
-  agent: {
-    execute(input: {
-      tenantContext: Awaited<ReturnType<typeof tenantContext>>;
-      payload: { tenantId: string };
-    }): Promise<{ success: boolean; data?: unknown; error?: string }>;
-  },
-  failureMessage: string
-): Promise<unknown> {
-  const output = await agent.execute({
-    tenantContext: await tenantContext(job),
-    payload: { tenantId: job.tenant_id },
-  });
-
-  if (!output.success || !output.data) {
-    throw new NonRetryableJobError(output.error || failureMessage);
+      throw error;
+    }
   }
 
-  return output.data;
+  /* Runs one agent as a checkpointed step of this job and unwraps its data. */
+  async function step(
+    job: JobRow,
+    context: TenantRuntime,
+    agentName: string,
+    failureMessage: string
+  ): Promise<unknown> {
+    let output;
+
+    try {
+      output = await deps.orchestrator.run(
+        context,
+        agentName,
+        { tenantId: job.tenant_id },
+        { jobId: job.id }
+      );
+    } catch (error) {
+      if (
+        error instanceof OrchestratorError ||
+        error instanceof TenantNotUsableError
+      ) {
+        throw new NonRetryableJobError(error.message);
+      }
+
+      throw error;
+    }
+
+    if (!output.success || !output.data) {
+      throw new NonRetryableJobError(output.error || failureMessage);
+    }
+
+    return output.data;
+  }
+
+  return { contextFor, step };
 }
 
 /* ========================================
    REGISTRY
 ======================================== */
 
-export const jobHandlers: JobRegistry = {
-  "stage1-audit": async (job) => {
-    const { websiteUrl, brandName, queries, competitors } =
-      job.payload as {
-        websiteUrl?: string;
-        brandName?: string;
-        queries?: unknown[];
-        competitors?: Array<{ name: string; websiteUrl?: string }>;
+export function createJobHandlers(deps: JobHandlerDeps): JobRegistry {
+  const { contextFor, step } = makeHelpers(deps);
+
+  return {
+    "stage1-audit": async (job) => {
+      const { websiteUrl, brandName, queries, competitors } =
+        job.payload as {
+          websiteUrl?: string;
+          brandName?: string;
+          queries?: unknown[];
+          competitors?: Array<{ name: string; websiteUrl?: string }>;
+        };
+
+      if (
+        typeof websiteUrl !== "string" ||
+        typeof brandName !== "string" ||
+        !Array.isArray(queries)
+      ) {
+        throw new NonRetryableJobError(
+          "stage1-audit job payload is incomplete."
+        );
+      }
+
+      const context = await contextFor(job);
+
+      try {
+        return await new Stage1AuditPipeline().execute({
+          tenantContext: context,
+          runAgent: deps.orchestrator.runner(context, {
+            jobId: job.id,
+          }),
+          websiteUrl,
+          brandName,
+          queries: queries as never,
+          competitors: competitors ?? [],
+        });
+      } catch (error) {
+        /* A step that fails the same way every time must not burn the job's retries. */
+        if (
+          error instanceof AgentStepFailedError &&
+          (error.kind === "permanent" || error.kind === "validation")
+        ) {
+          throw new NonRetryableJobError(error.message);
+        }
+
+        if (
+          error instanceof OrchestratorError ||
+          error instanceof TenantNotUsableError
+        ) {
+          throw new NonRetryableJobError(error.message);
+        }
+
+        throw error;
+      }
+    },
+
+    "stage2-plan": async (job) => {
+      const context = await contextFor(job);
+
+      const generated = (await step(
+        job,
+        context,
+        "content-plan",
+        "Content plan generation failed."
+      )) as {
+        auditReportId: string;
+        summary: unknown;
+        contentGapMap: unknown;
+        entitySchemaPlan: unknown;
+        prioritizedFixList: unknown;
+        roadmap: unknown;
       };
 
-    if (
-      typeof websiteUrl !== "string" ||
-      typeof brandName !== "string" ||
-      !Array.isArray(queries)
-    ) {
-      throw new NonRetryableJobError(
-        "stage1-audit job payload is incomplete."
-      );
-    }
+      return saveContentPlan(context.schema, {
+        auditReportId: generated.auditReportId,
+        summary: generated.summary,
+        contentGaps: generated.contentGapMap,
+        entityPlan: generated.entitySchemaPlan,
+        technicalPlan: generated.prioritizedFixList,
+        roadmap: generated.roadmap,
+      } as never);
+    },
 
-    return new Stage1AuditPipeline().execute({
-      tenantContext: await tenantContext(job),
-      websiteUrl,
-      brandName,
-      queries: queries as never,
-      competitors: competitors ?? [],
-    });
-  },
+    "stage3-produce": async (job) =>
+      step(
+        job,
+        await contextFor(job),
+        "content-production",
+        "Content production failed."
+      ),
 
-  "stage2-plan": async (job) => {
-    const context = await tenantContext(job);
+    "stage3-fix": async (job) =>
+      step(
+        job,
+        await contextFor(job),
+        "technical-fix",
+        "Technical fix run failed."
+      ),
 
-    const generated = (await runAgent(
-      job,
-      new ContentPlanAgent() as never,
-      "Content plan generation failed."
-    )) as {
-      auditReportId: string;
-      summary: unknown;
-      contentGapMap: unknown;
-      entitySchemaPlan: unknown;
-      prioritizedFixList: unknown;
-      roadmap: unknown;
-    };
+    "stage4-monitor": async (job) =>
+      step(
+        job,
+        await contextFor(job),
+        "monitoring",
+        "Monitoring run failed."
+      ),
 
-    return saveContentPlan(context.schema, {
-      auditReportId: generated.auditReportId,
-      summary: generated.summary,
-      contentGaps: generated.contentGapMap,
-      entityPlan: generated.entitySchemaPlan,
-      technicalPlan: generated.prioritizedFixList,
-      roadmap: generated.roadmap,
-    } as never);
-  },
+    "stage4-report": async (job) =>
+      step(
+        job,
+        await contextFor(job),
+        "report-generation",
+        "Report generation failed."
+      ),
+  };
+}
 
-  "stage3-produce": (job) =>
-    runAgent(
-      job,
-      new ContentProductionAgent() as never,
-      "Content production failed."
-    ),
-
-  "stage3-fix": (job) =>
-    runAgent(
-      job,
-      new TechnicalFixAgent() as never,
-      "Technical fix run failed."
-    ),
-
-  "stage4-monitor": (job) =>
-    runAgent(
-      job,
-      new MonitoringAgent() as never,
-      "Monitoring run failed."
-    ),
-
-  "stage4-report": (job) =>
-    runAgent(
-      job,
-      new ReportGenerationAgent() as never,
-      "Report generation failed."
-    ),
-};
+/* The registry the server uses: real tenant context, shared orchestrator. */
+export const jobHandlers: JobRegistry = createJobHandlers({
+  orchestrator: sharedOrchestrator,
+  buildContext: (tenantId) => buildTenantContext(tenantId),
+});

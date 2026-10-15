@@ -1,6 +1,7 @@
 import type { JobQueue, JobRow } from "./job-queue.js";
 
 import { RateLimitError } from "../usage/rate-limiter.js";
+import { StepBudgetExceededError } from "../orchestrator/orchestrator.js";
 import {
   createUsageContext,
   runInUsageContext,
@@ -60,7 +61,21 @@ export interface JobRunSummary {
   budgetExhausted: boolean;
 }
 
+/*
+ * A job's steps must be finished by this long after the
+ * runner starts (the function limit is 300s). The
+ * orchestrator will not start a step too close to it; the job
+ * continues in the next invocation from its checkpoints.
+ */
+export const INVOCATION_DEADLINE_MS = 280_000;
+
 export interface RunJobsOptions {
+  /* Called once a job reaches a final state, so its checkpoints can be cleared. */
+  onJobFinished?: (
+    job: JobRow,
+    outcome: "succeeded" | "failed"
+  ) => Promise<void>;
+
   budgetMs?: number;
   now?: () => number;
   log?: (line: string) => void;
@@ -75,6 +90,22 @@ export async function runJobs(
   const now = options.now ?? Date.now;
   const log = options.log ?? (() => undefined);
   const startedAt = now();
+
+  /* Clearing checkpoints is housekeeping: it must never fail a job. */
+  const finished = async (
+    job: JobRow,
+    outcome: "succeeded" | "failed"
+  ) => {
+    try {
+      await options.onJobFinished?.(job, outcome);
+    } catch (error) {
+      log(
+        `job ${job.id} cleanup failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  };
 
   const summary: JobRunSummary = {
     processed: 0,
@@ -117,7 +148,11 @@ export async function runJobs(
      * the tenant's bucket was empty, even if an
      * agent swallowed the error on the way up.
      */
-    const usage = createUsageContext(job.tenant_id, job.id);
+    const usage = createUsageContext(
+      job.tenant_id,
+      job.id,
+      startedAt + INVOCATION_DEADLINE_MS
+    );
 
     try {
       if (!handler) {
@@ -131,9 +166,28 @@ export async function runJobs(
       );
 
       await queue.markSucceeded(job.id, result);
+      await finished(job, "succeeded");
       summary.succeeded += 1;
       log(`job ${job.id} (${job.type}) succeeded`);
     } catch (error) {
+      /*
+       * Out of time in this invocation, not a failure: park
+       * the job to continue right away in the next one. The
+       * steps already done are checkpointed, and no attempt
+       * is used up.
+       */
+      if (error instanceof StepBudgetExceededError) {
+        await queue.deferRateLimited(job, error.message, 1, {
+          floorSeconds: 0,
+        });
+
+        summary.deferred += 1;
+
+        log(`job ${job.id} (${job.type}) continues later: ${error.message}`);
+
+        continue;
+      }
+
       const rateLimit =
         error instanceof RateLimitError
           ? {
@@ -175,6 +229,7 @@ export async function runJobs(
         summary.retried += 1;
       } else {
         summary.failed += 1;
+        await finished(job, "failed");
       }
 
       log(

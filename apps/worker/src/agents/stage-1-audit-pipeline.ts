@@ -1,28 +1,11 @@
-import {
-  TechnicalAuditAgent,
-} from "./technical-audit/index.js";
-
-import {
-  ContentEntityAuditAgent,
-} from "./content-entity/index.js";
-
-import {
-  CitationVisibilityAuditAgent,
-} from "./citation-visibility/index.js";
-
-import {
-  CompetitorBenchmarkAgent,
-} from "./competitor-benchmark/index.js";
-
-import {
-  AuditAggregatorAgent,
-  type AuditReport,
-} from "./audit-aggregator/index.js";
+import type { AuditReport } from "./audit-aggregator/index.js";
 
 import type {
   AgentOutput,
   TenantContext,
 } from "agent-contracts";
+
+import type { AgentRunner } from "../orchestrator/orchestrator.js";
 
 /*
  * NOTE: adjust this import path if your project's
@@ -42,6 +25,15 @@ import {
 
 export interface Stage1AuditPipelineInput {
   tenantContext: TenantContext;
+
+  /*
+   * How each sub-agent is run. Always the orchestrator's
+   * runner (orchestrator.runner(ctx, { jobId })): that is what
+   * records every step and lets a retried or deferred job skip
+   * the steps that already succeeded instead of paying for
+   * them again.
+   */
+  runAgent: AgentRunner;
 
   websiteUrl: string;
 
@@ -91,16 +83,33 @@ export interface Stage1AuditPipelineResult {
    HELPERS
 ======================================== */
 
+/*
+ * A sub-agent step failed. kind is the orchestrator's
+ * classification, so the job can tell "will fail the same way
+ * again" (validation / permanent: do not retry the job) from
+ * "may work next time".
+ */
+export class AgentStepFailedError extends Error {
+  readonly kind: string;
+
+  constructor(message: string, kind: string) {
+    super(message);
+    this.name = "AgentStepFailedError";
+    this.kind = kind;
+  }
+}
+
 function extractAgentData(
   output: AgentOutput<unknown>,
   agentName: string
 ): Record<string, unknown> {
   if (!output.success) {
-    throw new Error(
+    throw new AgentStepFailedError(
       `${agentName} failed: ${
         output.error ??
         "Unknown agent error."
-      }`
+      }`,
+      String(output.metadata?.failureKind ?? "permanent")
     );
   }
 
@@ -132,21 +141,6 @@ function extractAgentData(
 ======================================== */
 
 export class Stage1AuditPipeline {
-  private readonly technicalAuditAgent =
-    new TechnicalAuditAgent();
-
-  private readonly contentEntityAuditAgent =
-    new ContentEntityAuditAgent();
-
-  private readonly citationVisibilityAuditAgent =
-    new CitationVisibilityAuditAgent();
-
-  private readonly competitorBenchmarkAgent =
-    new CompetitorBenchmarkAgent();
-
-  private readonly auditAggregatorAgent =
-    new AuditAggregatorAgent();
-
   /* ======================================
      EXECUTE
   ====================================== */
@@ -208,47 +202,55 @@ export class Stage1AuditPipeline {
     ==================================== */
 
     const technicalAudit =
-      await this.technicalAuditAgent.execute({
-        tenantContext:
-          input.tenantContext,
-
-        payload: {
+      await input.runAgent(
+        "technical-audit",
+        {
           tenantId,
           websiteUrl,
-        },
-      });
+        }
+      );
+
+    /*
+     * A failed step stops the pipeline here (the report needs
+     * every step), so later steps never spend provider calls
+     * on a run that cannot complete.
+     */
+    extractAgentData(technicalAudit, "Technical audit");
 
     /* ====================================
        3. CONTENT + ENTITY AUDIT
     ==================================== */
 
     const contentEntityAudit =
-      await this.contentEntityAuditAgent.execute({
-        tenantContext:
-          input.tenantContext,
-
-        payload: {
+      await input.runAgent(
+        "content-entity-audit",
+        {
           tenantId,
           websiteUrl,
-        },
-      });
+        }
+      );
+
+    extractAgentData(contentEntityAudit, "Content/entity audit");
 
     /* ====================================
        4. CITATION / VISIBILITY AUDIT
     ==================================== */
 
     const citationVisibilityAudit =
-      await this.citationVisibilityAuditAgent.execute({
-        tenantContext:
-          input.tenantContext,
-
-        payload: {
+      await input.runAgent(
+        "citation-visibility-audit",
+        {
           tenantId,
           websiteUrl,
           brandName,
           queries: input.queries,
-        },
-      });
+        }
+      );
+
+    extractAgentData(
+      citationVisibilityAudit,
+      "Citation/visibility audit"
+    );
 
     /* ====================================
        5. COMPETITOR BENCHMARK
@@ -269,31 +271,29 @@ export class Stage1AuditPipeline {
 
     const competitorBenchmark =
       hasCompetitors
-        ? await this.competitorBenchmarkAgent.execute(
+        ? await input.runAgent(
+            "competitor-benchmark",
             {
-              tenantContext:
-                input.tenantContext,
-
-              payload: {
                 tenantId,
                 websiteUrl,
                 brandName,
                 competitors,
-              },
-            }
+              }
           )
         : null;
+
+    if (competitorBenchmark) {
+      extractAgentData(competitorBenchmark, "Competitor benchmark");
+    }
 
     /* ====================================
        6. AGGREGATE STAGE 1
     ==================================== */
 
     const auditAggregatorResult =
-      await this.auditAggregatorAgent.execute({
-        tenantContext:
-          input.tenantContext,
-
-        payload: {
+      await input.runAgent(
+        "audit-aggregator",
+        {
           tenantId,
 
           technicalAudit:
@@ -321,8 +321,8 @@ export class Stage1AuditPipeline {
                   "Competitor benchmark"
                 )
               : undefined,
-        },
-      });
+        }
+      );
 
     if (
       !auditAggregatorResult.success
