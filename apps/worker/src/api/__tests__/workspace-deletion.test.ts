@@ -548,3 +548,44 @@ describe("deleting the user's LAST workspace", () => {
     assert.deepEqual((await res.json()).data, []);
   });
 });
+
+describe("POST /api/tenants/:tenantId/cancel was removed", () => {
+  it("is 404 even for the owner, and nothing is scheduled", async () => {
+    const res = await call(
+      "POST",
+      `/api/tenants/${T_NEX}/cancel`,
+      "token-owner",
+      { confirmSlug: "nexflow" }
+    );
+
+    assert.equal(res.status, 404);
+    assert.equal(tenantById(T_NEX)!.status, "active");
+    assert.equal(tenantById(T_NEX)!.deprovision_at, null);
+  });
+
+  it("is 404 for a non-owner member and a non-member too", async () => {
+    for (const token of ["token-member", "token-other"]) {
+      const res = await call("POST", `/api/tenants/${T_NEX}/cancel`, token, {});
+
+      assert.equal(res.status, 404, token);
+    }
+
+    assert.equal(tenantById(T_NEX)!.status, "active");
+  });
+
+  it("server.ts registers no deprovisioning route except the guarded DELETE", async () => {
+    const { readFileSync } = await import("node:fs");
+
+    const source = readFileSync(
+      new URL("../server.ts", import.meta.url),
+      "utf8"
+    );
+
+    assert.ok(!/["']\/api\/tenants\/:tenantId\/cancel["']/.test(source));
+    assert.ok(!/scheduleTenantDeprovisioning/.test(source));
+    assert.match(
+      source,
+      /app\.delete\("\/api\/tenants\/:tenantId", deleteWorkspace\)/
+    );
+  });
+});

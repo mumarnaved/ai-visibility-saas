@@ -110,7 +110,6 @@ const TENANT_ROUTES: Array<[string, string]> = [
   ["POST", "/oauth/google/disconnect"],
   ["POST", "/verify-domain"],
   ["POST", "/quick-verify-domain"],
-  ["POST", "/cancel"],
   ["GET", "/jobs/some-job"],
   ["GET", "/usage"],
 ];

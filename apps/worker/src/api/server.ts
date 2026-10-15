@@ -86,7 +86,6 @@ import {
 } from "../database/postgres/domain-verification/domain-verification-service.js";
 
 import {
-  scheduleTenantDeprovisioning,
   runDueDeprovisioning,
 } from "../database/postgres/tenant-deprovisioning.js";
 
@@ -3253,68 +3252,13 @@ app.post(
 app.delete("/api/tenants/:tenantId", deleteWorkspace);
 
 /* ========================================
-   CANCEL TENANT
+   (POST /api/tenants/:tenantId/cancel was removed.)
+
+   It let any member start deprovisioning with no owner
+   check and no confirmation, and nothing used it. Deleting
+   a workspace is DELETE /api/tenants/:tenantId above:
+   owner only, slug-confirmed, same deprovisioning flow.
 ======================================== */
-
-app.post(
-  "/api/tenants/:tenantId/cancel",
-  async (req, res) => {
-    try {
-      const tenantId =
-        req.params.tenantId;
-
-      if (
-        typeof tenantId !== "string" ||
-        !tenantId.trim()
-      ) {
-        return res.status(400).json({
-          success: false,
-          error:
-            "tenantId is required.",
-        });
-      }
-
-      const tenant =
-        await getTenantById(
-          tenantId.trim()
-        );
-
-      if (!tenant) {
-        return res.status(404).json({
-          success: false,
-          error: "Tenant not found.",
-        });
-      }
-
-      await scheduleTenantDeprovisioning(
-        tenantId.trim()
-      );
-
-      return res.json({
-        success: true,
-        data: {
-          status: "deprovisioning",
-        },
-        metadata: {
-          operation: "cancel-tenant",
-        },
-      });
-    } catch (error) {
-      console.error(
-        "Tenant cancellation failed:",
-        error
-      );
-
-      return res.status(500).json({
-        success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Tenant cancellation failed.",
-      });
-    }
-  }
-);
 
 /* ========================================
    CRON - DEPROVISION DUE TENANTS
