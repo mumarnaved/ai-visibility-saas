@@ -146,6 +146,19 @@ export class FakeJobsDb implements JobQueryable {
         return { rows: [] };
       }
 
+      case "defer": {
+        const [id, message, seconds] = params as [string, string, number];
+        const job = this.job(id);
+
+        job.status = "queued";
+        job.attempts = Math.max(job.attempts - 1, 0);
+        job.error = message;
+        job.locked_at = null;
+        job.run_at = new Date(this.now.getTime() + seconds * 1000);
+
+        return { rows: [] };
+      }
+
       case "give_up": {
         const [id, message] = params as [string, string];
         const job = this.job(id);

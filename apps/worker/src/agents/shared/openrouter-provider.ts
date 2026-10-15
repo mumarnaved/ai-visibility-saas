@@ -2,6 +2,10 @@
    OPENROUTER PROVIDER
 ======================================== */
 
+import { RateLimitError } from "../../usage/rate-limiter.js";
+import { openRouterCost } from "../../usage/usage-rates.js";
+import { meter } from "../../usage/usage-instance.js";
+
 export interface OpenRouterAIResponse {
   provider: string;
   model: string;
@@ -119,6 +123,22 @@ function sleep(
 const DEFAULT_SYSTEM_PROMPT =
   "You are a general-purpose AI assistant being evaluated by an AI visibility platform. Answer the user's question naturally, accurately, and directly. Do not intentionally mention or avoid any brand. Do not classify or moderate the user's request. Provide a normal helpful answer.";
 
+interface ModelCallResult {
+  content: string;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+  };
+}
+
+/*
+ * Each HTTP attempt is metered separately (the
+ * retry/fallback loop below can make several),
+ * so attempts the per-tenant limiter refuses
+ * never reach OpenRouter. Units are tokens; when
+ * OpenRouter omits usage they are estimated at
+ * ~4 characters per token.
+ */
 async function callModelOnce(
   model: string,
   apiKey: string,
@@ -127,6 +147,53 @@ async function callModelOnce(
   maxTokens: number,
   jsonMode: boolean
 ): Promise<string> {
+  const result = await meter(
+    {
+      provider: "openrouter",
+      operation: "chat_completion",
+      measure: (r: ModelCallResult) => {
+        const promptTokens =
+          r.usage?.prompt_tokens ??
+          Math.ceil(
+            (systemPrompt.length + query.length) / 4
+          );
+
+        const completionTokens =
+          r.usage?.completion_tokens ??
+          Math.ceil(r.content.length / 4);
+
+        return {
+          units: promptTokens + completionTokens,
+          costEstimate: openRouterCost(
+            model,
+            promptTokens,
+            completionTokens
+          ),
+        };
+      },
+    },
+    () =>
+      requestModel(
+        model,
+        apiKey,
+        systemPrompt,
+        query,
+        maxTokens,
+        jsonMode
+      )
+  );
+
+  return result.content;
+}
+
+async function requestModel(
+  model: string,
+  apiKey: string,
+  systemPrompt: string,
+  query: string,
+  maxTokens: number,
+  jsonMode: boolean
+): Promise<ModelCallResult> {
   const response = await fetch(
     OPENROUTER_URL,
     {
@@ -230,6 +297,7 @@ async function callModelOnce(
           content?: string;
         };
       }>;
+      usage?: ModelCallResult["usage"];
     };
 
   const content =
@@ -245,7 +313,10 @@ async function callModelOnce(
     );
   }
 
-  return content.trim();
+  return {
+    content: content.trim(),
+    usage: data.usage,
+  };
 }
 
 export async function runOpenRouter(
@@ -298,6 +369,17 @@ export async function runOpenRouter(
           response: content,
         };
       } catch (error) {
+        /*
+         * The tenant's own limit, not a provider
+         * failure: another attempt or model would
+         * hit the same empty bucket. Let the
+         * caller (ultimately the job runner) see
+         * it as such.
+         */
+        if (error instanceof RateLimitError) {
+          throw error;
+        }
+
         const isRetryable =
           error instanceof
             OpenRouterCallError &&

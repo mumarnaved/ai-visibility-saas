@@ -281,6 +281,13 @@ export const BASELINE_MARKERS: Record<
       "idx_jobs_status_run_at",
       "idx_jobs_tenant_id"
     ),
+    "011_create_usage_events": relations(
+      "usage_events",
+      "idx_usage_events_tenant_created"
+    ),
+    "012_create_rate_limit_buckets": relations(
+      "rate_limit_buckets"
+    ),
   },
 };
 

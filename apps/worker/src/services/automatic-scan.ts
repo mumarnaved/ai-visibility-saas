@@ -18,6 +18,11 @@ import {
   getBrandNameFromWebsite,
 } from "../lib/brand-name.js";
 
+import {
+  createUsageContext,
+  runInUsageContext,
+} from "../usage/usage-context.js";
+
 /* ========================================
    DEFAULT QUERIES
 
@@ -79,7 +84,24 @@ function buildTenantContext(
    (approval_status stays 'pending').
 ======================================== */
 
-export async function runAutomaticScan(
+export function runAutomaticScan(
+  tenantId: string,
+  websiteUrl: string,
+  schemaName: string
+): Promise<void> {
+  /*
+   * Not a queued job, but it spends the same paid
+   * provider calls, so it gets its own usage
+   * context (metered and rate limited per tenant,
+   * with no job id).
+   */
+  return runInUsageContext(
+    createUsageContext(tenantId),
+    () => scanTenant(tenantId, websiteUrl, schemaName)
+  );
+}
+
+async function scanTenant(
   tenantId: string,
   websiteUrl: string,
   schemaName: string

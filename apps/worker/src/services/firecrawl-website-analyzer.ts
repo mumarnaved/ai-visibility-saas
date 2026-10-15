@@ -2,6 +2,8 @@ import {
   scrapeWithFirecrawl,
 } from "../agents/shared/firecrawl-client.js";
 
+import { RateLimitError } from "../usage/rate-limiter.js";
+
 import {
   analyzeWebsite,
   cleanText,
@@ -204,6 +206,17 @@ export async function getWebsiteAnalysis(
       url
     );
   } catch (error) {
+    /*
+     * The tenant's own rate limit is not a
+     * Firecrawl failure: falling back would
+     * quietly finish the audit with the weaker
+     * analyzer. Surface it so the job is
+     * deferred and re-run in full instead.
+     */
+    if (error instanceof RateLimitError) {
+      throw error;
+    }
+
     console.warn(
       `[website-analysis] Firecrawl failed for ${url}, falling back to regex analyzer:`,
       error

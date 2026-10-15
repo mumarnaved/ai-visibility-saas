@@ -275,6 +275,41 @@ export function createJobQueue(
   /* ---------------------------------------- */
 
   /*
+   * The job hit the tenant's own provider rate
+   * limit. That is a wait, not a failure: back to
+   * queued, no later than the existing backoff base
+   * and no sooner than the limiter says a token is
+   * back, and the claim's attempt is handed back so
+   * waiting never uses up the job's real retries.
+   */
+  async function deferRateLimited(
+    job: Pick<JobRow, "id">,
+    message: string,
+    retryAfterSeconds: number
+  ): Promise<void> {
+    await db.query(
+      `
+        /* jobs.defer */
+        UPDATE ${table}
+        SET
+          status = 'queued',
+          attempts = GREATEST(attempts - 1, 0),
+          error = $2,
+          locked_at = NULL,
+          run_at = NOW() + make_interval(secs => $3)
+        WHERE id = $1
+      `,
+      [
+        job.id,
+        message,
+        Math.max(retryAfterSeconds, backoffSeconds(1)),
+      ]
+    );
+  }
+
+  /* ---------------------------------------- */
+
+  /*
    * Jobs left "running" by an invocation that died
    * at the function timeout. They go back to queued
    * (the claim already counted the attempt), or to
@@ -350,6 +385,7 @@ export function createJobQueue(
     claimNext,
     markSucceeded,
     markFailed,
+    deferRateLimited,
     requeueStuck,
     getJobForTenant,
   };

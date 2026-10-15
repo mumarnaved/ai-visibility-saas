@@ -130,6 +130,9 @@ import { jobHandlers } from "../jobs/job-handlers.js";
 import { runJobs } from "../jobs/job-runner.js";
 import { jobKick } from "../jobs/job-kick.js";
 import { isJobId, type JobRow } from "../jobs/job-queue.js";
+import { usageRepository } from "../usage/usage-instance.js";
+import { isTenantUuid } from "../usage/usage-repository.js";
+import { rateLimitErrorHandler } from "../usage/rate-limit-http.js";
 
 const app: express.Express = express();
 
@@ -1438,6 +1441,48 @@ app.get(
       return res.status(500).json({
         success: false,
         error: "Failed to load job.",
+      });
+    }
+  }
+);
+
+/* ========================================
+   GET USAGE
+
+   Estimated external-API usage for the current
+   (UTC) month, totalled per provider. Under the
+   requireTenantAccess mount, and the query is
+   scoped by tenant_id, so a tenant only ever
+   sees its own numbers.
+======================================== */
+
+app.get(
+  "/api/tenants/:tenantId/usage",
+  async (req, res) => {
+    try {
+      const tenantId = req.params.tenantId?.trim();
+
+      /*
+       * requireTenantAccess lets the static id
+       * "latest" through; it is not a tenant.
+       */
+      if (!isTenantUuid(tenantId)) {
+        return res.status(404).json({
+          success: false,
+          error: "Tenant not found.",
+        });
+      }
+
+      return res.json({
+        success: true,
+        data: await usageRepository.getMonthlyUsage(tenantId),
+      });
+    } catch (error) {
+      console.error("Failed to load usage:", error);
+
+      return res.status(500).json({
+        success: false,
+        error: "Failed to load usage.",
       });
     }
   }
@@ -3337,6 +3382,13 @@ app.get(
     }
   }
 );
+
+/*
+ * A metered provider call that hit the tenant's
+ * rate limit and was not caught by its route
+ * becomes a 429 with Retry-After, not a 500.
+ */
+app.use(rateLimitErrorHandler);
 
 /* ========================================
    START SERVER

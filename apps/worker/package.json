@@ -9,7 +9,7 @@
     "start": "tsx src/api/server.ts",
     "migrate:tenants": "tsx src/database/postgres/migrate-all-tenants.ts",
     "backfill:manifests": "tsx src/database/postgres/backfill-tenant-manifests.ts",
-    "test": "node --import tsx --test src/api/__tests__/*.test.ts src/database/postgres/__tests__/*.test.ts src/services/storage/__tests__/*.test.ts src/jobs/__tests__/*.test.ts"
+    "test": "node --import tsx --test src/api/__tests__/*.test.ts src/database/postgres/__tests__/*.test.ts src/services/storage/__tests__/*.test.ts src/jobs/__tests__/*.test.ts src/usage/__tests__/*.test.ts"
   },
   "keywords": [],
   "author": "",

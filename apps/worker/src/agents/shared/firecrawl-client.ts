@@ -11,6 +11,8 @@
    analyzer in website-analyzer.ts cannot.
 ======================================== */
 
+import { meter } from "../../usage/usage-instance.js";
+
 const FIRECRAWL_SCRAPE_URL =
   "https://api.firecrawl.dev/v1/scrape";
 
@@ -56,7 +58,25 @@ function getApiKey(): string {
    SCRAPE
 ======================================== */
 
-export async function scrapeWithFirecrawl(
+/*
+ * One scrape = one Firecrawl credit. Metered
+ * (and per-tenant rate limited) per call; a
+ * failed scrape is recorded as a failure.
+ */
+export function scrapeWithFirecrawl(
+  url: string
+): Promise<FirecrawlScrapeData> {
+  return meter(
+    {
+      provider: "firecrawl",
+      operation: "scrape",
+      measure: () => ({ units: 1 }),
+    },
+    () => requestScrape(url)
+  );
+}
+
+async function requestScrape(
   url: string
 ): Promise<FirecrawlScrapeData> {
   const apiKey = getApiKey();

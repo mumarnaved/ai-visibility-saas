@@ -23,6 +23,8 @@ import {
   getSiteIndexSignals,
 } from "../shared/serpapi-client.js";
 
+import { RateLimitError } from "../../usage/rate-limiter.js";
+
 interface SerpApiMetrics {
   organicKeywords: number | null;
   dataNotes: string[];
@@ -439,6 +441,16 @@ export class CompetitorBenchmarkAgent
         dataNotes,
       };
     } catch (error) {
+      /*
+       * The tenant's own rate limit, not a
+       * SerpApi outage: do not bake "unavailable"
+       * into the saved benchmark. Let the job be
+       * deferred and re-run.
+       */
+      if (error instanceof RateLimitError) {
+        throw error;
+      }
+
       dataNotes.push(
         `SerpApi lookup was unavailable: ${
           error instanceof Error

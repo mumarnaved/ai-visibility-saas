@@ -1,5 +1,11 @@
 import type { JobQueue, JobRow } from "./job-queue.js";
 
+import { RateLimitError } from "../usage/rate-limiter.js";
+import {
+  createUsageContext,
+  runInUsageContext,
+} from "../usage/usage-context.js";
+
 /* ========================================
    JOB RUNNER
 
@@ -13,6 +19,15 @@ import type { JobQueue, JobRow } from "./job-queue.js";
 
 /* Stop claiming new jobs after this long (function limit is 300s). */
 export const DEFAULT_BUDGET_MS = 250_000;
+
+/*
+ * A job that keeps hitting the tenant's provider
+ * rate limit is deferred (not failed) until it is
+ * this old; after that it goes through the normal
+ * retry/failure path so a permanently starved job
+ * cannot loop forever.
+ */
+export const RATE_LIMIT_MAX_DEFER_MS = 6 * 60 * 60 * 1000;
 
 /*
  * Thrown by a handler when running the job again
@@ -37,6 +52,7 @@ export interface JobRunSummary {
   processed: number;
   succeeded: number;
   retried: number;
+  deferred: number;
   failed: number;
   requeuedStuck: number;
   failedStuck: number;
@@ -64,6 +80,7 @@ export async function runJobs(
     processed: 0,
     succeeded: 0,
     retried: 0,
+    deferred: 0,
     failed: 0,
     requeuedStuck: 0,
     failedStuck: 0,
@@ -92,6 +109,16 @@ export async function runJobs(
 
     const handler = registry[job.type];
 
+    /*
+     * Everything the handler does runs inside this
+     * tenant's usage context, so provider calls are
+     * metered, rate limited and attributed to this
+     * job. usage.rateLimited is set by meter() when
+     * the tenant's bucket was empty, even if an
+     * agent swallowed the error on the way up.
+     */
+    const usage = createUsageContext(job.tenant_id, job.id);
+
     try {
       if (!handler) {
         throw new NonRetryableJobError(
@@ -99,12 +126,42 @@ export async function runJobs(
         );
       }
 
-      const result = await handler(job);
+      const result = await runInUsageContext(usage, () =>
+        handler(job)
+      );
 
       await queue.markSucceeded(job.id, result);
       summary.succeeded += 1;
       log(`job ${job.id} (${job.type}) succeeded`);
     } catch (error) {
+      const rateLimit =
+        error instanceof RateLimitError
+          ? {
+              retryAfterSeconds: error.retryAfterSeconds,
+              message: error.message,
+            }
+          : usage.rateLimited;
+
+      if (
+        rateLimit &&
+        now() - job.created_at.getTime() <
+          RATE_LIMIT_MAX_DEFER_MS
+      ) {
+        await queue.deferRateLimited(
+          job,
+          rateLimit.message,
+          rateLimit.retryAfterSeconds
+        );
+
+        summary.deferred += 1;
+
+        log(
+          `job ${job.id} (${job.type}) deferred: ${rateLimit.message}`
+        );
+
+        continue;
+      }
+
       const message =
         error instanceof Error
           ? error.message

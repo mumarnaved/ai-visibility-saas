@@ -112,6 +112,7 @@ const TENANT_ROUTES: Array<[string, string]> = [
   ["POST", "/quick-verify-domain"],
   ["POST", "/cancel"],
   ["GET", "/jobs/some-job"],
+  ["GET", "/usage"],
 ];
 
 /* Routes under /api/citation-audit, which take ?tenantId=. */

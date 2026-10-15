@@ -22,6 +22,8 @@
    is quota-limited (~100 searches/month).
 ======================================== */
 
+import { meter } from "../../usage/usage-instance.js";
+
 const SERPAPI_SEARCH_URL =
   "https://serpapi.com/search.json";
 
@@ -71,7 +73,25 @@ function getApiKey(): string {
    GET SITE INDEX SIGNALS
 ======================================== */
 
-export async function getSiteIndexSignals(
+/*
+ * One search = one SerpApi search. Metered (and
+ * per-tenant rate limited) per call; a failed
+ * search is recorded as a failure.
+ */
+export function getSiteIndexSignals(
+  domain: string
+): Promise<SiteIndexSignals> {
+  return meter(
+    {
+      provider: "serpapi",
+      operation: "site_index_search",
+      measure: () => ({ units: 1 }),
+    },
+    () => requestSiteIndexSignals(domain)
+  );
+}
+
+async function requestSiteIndexSignals(
   domain: string
 ): Promise<SiteIndexSignals> {
   const apiKey = getApiKey();
