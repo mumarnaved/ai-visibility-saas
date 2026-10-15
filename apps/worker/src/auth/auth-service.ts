@@ -51,6 +51,20 @@ export interface AuthResult {
   session: AuthSession;
 }
 
+/*
+ * Login can succeed for a user with no workspace (they
+ * deleted their last one): tenant and workspace are then
+ * null and the web app sends them to onboarding.
+ */
+export interface LoginResult
+  extends Omit<
+    AuthResult,
+    "tenant" | "workspace"
+  > {
+  tenant: AuthResult["tenant"] | null;
+  workspace: AuthResult["workspace"] | null;
+}
+
 /* ========================================
    NORMALIZE EMAIL
 ======================================== */
@@ -463,7 +477,7 @@ export async function signup(
 
 export async function login(
   request: LoginRequest
-): Promise<AuthResult> {
+): Promise<LoginResult> {
   const email =
     normalizeEmail(
       request.email
@@ -533,43 +547,23 @@ export async function login(
     );
   }
 
+  /*
+   * The user's oldest ACTIVE workspace. Deleted
+   * (deprovisioning/deprovisioned) workspaces are
+   * skipped, and so is anything not yet active. A user
+   * with no such workspace (they deleted their last
+   * one) still logs in, with tenant and workspace
+   * null: the web app sends them to onboarding to
+   * create a new one.
+   */
   const workspaceResult =
     await pool.query<{
-      id: string;
-      name: string;
-      slug: string;
+      workspace_id: string;
+      workspace_name: string;
+      workspace_slug: string;
       tenant_id: string;
-    }>(
-      `
-        SELECT
-          w.id,
-          w.name,
-          w.slug,
-          w.tenant_id
-        FROM platform.workspaces w
-        INNER JOIN platform.workspace_members wm
-          ON wm.workspace_id = w.id
-        WHERE wm.user_id = $1
-        ORDER BY w.created_at ASC
-        LIMIT 1
-      `,
-      [user.id]
-    );
-
-  const workspace =
-    workspaceResult.rows[0];
-
-  if (!workspace) {
-    throw new Error(
-      "No workspace is associated with this account."
-    );
-  }
-
-  const tenantResult =
-    await pool.query<{
-      id: string;
-      name: string;
-      slug: string;
+      tenant_name: string;
+      tenant_slug: string;
       website_url: string | null;
       schema_name: string;
       status: string;
@@ -577,36 +571,31 @@ export async function login(
     }>(
       `
         SELECT
-          id,
-          name,
-          slug,
-          website_url,
-          schema_name,
-          status,
-          plan
-        FROM platform.tenants
-        WHERE id = $1
+          w.id AS workspace_id,
+          w.name AS workspace_name,
+          w.slug AS workspace_slug,
+          t.id AS tenant_id,
+          t.name AS tenant_name,
+          t.slug AS tenant_slug,
+          t.website_url,
+          t.schema_name,
+          t.status,
+          t.plan
+        FROM platform.workspaces w
+        INNER JOIN platform.workspace_members wm
+          ON wm.workspace_id = w.id
+        INNER JOIN platform.tenants t
+          ON t.id = w.tenant_id
+        WHERE wm.user_id = $1
+          AND t.status = 'active'
+        ORDER BY w.created_at ASC
         LIMIT 1
       `,
-      [workspace.tenant_id]
+      [user.id]
     );
 
-  const tenant =
-    tenantResult.rows[0];
-
-  if (!tenant) {
-    throw new Error(
-      "Workspace tenant could not be found."
-    );
-  }
-
-  if (
-    tenant.status !== "active"
-  ) {
-    throw new Error(
-      "This workspace is not active."
-    );
-  }
+  const active =
+    workspaceResult.rows[0];
 
   /*
    * Remove previous sessions before creating
@@ -642,23 +631,29 @@ export async function login(
       status: user.status,
     },
 
-    tenant: {
-      id: tenant.id,
-      name: tenant.name,
-      slug: tenant.slug,
-      websiteUrl:
-        tenant.website_url,
-      schemaName:
-        tenant.schema_name,
-      status: tenant.status,
-      plan: tenant.plan,
-    },
+    tenant: active
+      ? {
+          id: active.tenant_id,
+          name: active.tenant_name,
+          slug: active.tenant_slug,
+          websiteUrl:
+            active.website_url,
+          schemaName:
+            active.schema_name,
+          status: active.status,
+          plan: active.plan,
+        }
+      : null,
 
-    workspace: {
-      id: workspace.id,
-      name: workspace.name,
-      slug: workspace.slug,
-    },
+    workspace: active
+      ? {
+          id: active.workspace_id,
+          name:
+            active.workspace_name,
+          slug:
+            active.workspace_slug,
+        }
+      : null,
 
     session,
   };

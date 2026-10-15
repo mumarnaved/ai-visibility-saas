@@ -132,6 +132,8 @@ import { jobKick } from "../jobs/job-kick.js";
 import { isJobId, type JobRow } from "../jobs/job-queue.js";
 import { usageRepository } from "../usage/usage-instance.js";
 import { isTenantUuid } from "../usage/usage-repository.js";
+import { LIVE_TENANT_SQL } from "../lib/tenant-status.js";
+import { deleteWorkspace } from "./workspace-deletion.js";
 import { rateLimitErrorHandler } from "../usage/rate-limit-http.js";
 
 const app: express.Express = express();
@@ -537,6 +539,7 @@ app.get(
             JOIN platform.workspace_members wm
               ON wm.workspace_id = w.id
             WHERE wm.user_id = $1
+              AND ${LIVE_TENANT_SQL}
             ORDER BY t.created_at DESC
           `,
           [userId]
@@ -613,6 +616,7 @@ app.get(
             JOIN platform.workspace_members wm
               ON wm.workspace_id = w.id
             WHERE wm.user_id = $1
+              AND ${LIVE_TENANT_SQL}
             ORDER BY t.created_at DESC
             LIMIT 1
           `,
@@ -3237,6 +3241,16 @@ app.post(
     }
   }
 );
+
+/* ========================================
+   DELETE WORKSPACE
+
+   Owner only, slug-confirmed, and it only starts
+   the existing deprovisioning flow (recoverable until
+   the purge cron). See workspace-deletion.ts.
+======================================== */
+
+app.delete("/api/tenants/:tenantId", deleteWorkspace);
 
 /* ========================================
    CANCEL TENANT

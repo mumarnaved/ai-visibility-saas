@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 
 import { pool } from "../connection.js";
 
+import { LIVE_TENANT_SQL } from "../../../lib/tenant-status.js";
+
 export type PlanTier =
   | "free"
   | "growth"
@@ -241,6 +243,7 @@ export async function countTenantsOwnedByUser(
         JOIN platform.workspace_members wm
           ON wm.workspace_id = w.id
         WHERE wm.user_id = $1
+          AND ${LIVE_TENANT_SQL}
       `,
       [userId]
     );

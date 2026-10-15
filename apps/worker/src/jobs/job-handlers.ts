@@ -11,6 +11,8 @@ import { ReportGenerationAgent } from "../agents/report-generation/index.js";
 
 import { saveContentPlan } from "../database/postgres/content-plan/content-plan-repository.js";
 
+import { isDeletedTenantStatus } from "../lib/tenant-status.js";
+
 import type { JobRow } from "./job-queue.js";
 import {
   NonRetryableJobError,
@@ -51,7 +53,7 @@ async function tenantSchema(
 ): Promise<string> {
   const result = await pool.query(
     `
-      SELECT schema_name
+      SELECT schema_name, status
       FROM platform.tenants
       WHERE id = $1
       LIMIT 1
@@ -63,6 +65,15 @@ async function tenantSchema(
 
   if (typeof schemaName !== "string") {
     throw new NonRetryableJobError("Tenant not found.");
+  }
+
+  /*
+   * A workspace deleted while its job sat in the queue
+   * must not spend paid API calls: fail the job before
+   * any agent runs.
+   */
+  if (isDeletedTenantStatus(result.rows[0].status)) {
+    throw new NonRetryableJobError("Workspace was deleted.");
   }
 
   return schemaName;
